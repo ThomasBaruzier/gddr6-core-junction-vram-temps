@@ -233,6 +233,8 @@ static int read_register_temp(struct pci_dev *dev, uint32_t offset, uint32_t *te
 
     munmap(map_base, PG_SZ);
     close(fd);
+
+    return (*temp < 0x7f) ? 0 : -1;
 }
 
 static int get_gpu_temps(Context *ctx, unsigned int index, GpuDevice *gpu) {
@@ -289,22 +291,22 @@ static int monitor_temperatures_table(Context *ctx) {
 }
 
 static int monitor_temperatures_json(Context *ctx) {
+    ctx->buffer_pos = 0;
     time_t now = time(NULL);
-    printf("{\"timestamp\":%ld,\"gpus\":[", (long)now);
+    buffer_append(ctx, "{\"timestamp\":%ld,\"gpus\":[", (long)now);
 
-    int first = 1;
     for (unsigned int i = 0; i < ctx->device_count; i++) {
         GpuDevice gpu = {0};
         if (get_gpu_temps(ctx, i, &gpu) != 0) return -1;
 
-        if (!first) {
-            printf(",");
+        if (i > 0) {
+            buffer_append(ctx, ",");
         }
-        printf("{\"index\":%u,\"core\":%u,\"junction\":%u,\"vram\":%u}",
+        buffer_append(ctx, "{\"index\":%u,\"core\":%u,\"junction\":%u,\"vram\":%u}",
                i, gpu.gpu_temp, gpu.junction_temp, gpu.vram_temp);
-        first = 0;
     }
-    printf("]}\n");
+    buffer_append(ctx, "]}");
+    printf("%s\n", ctx->output_buffer);
     fflush(stdout);
     return 0;
 }
@@ -352,8 +354,6 @@ static int run_json_loop(Context *ctx) {
     while (running) {
         if (monitor_temperatures_json(ctx) != 0) return -1;
         if (handle_input(REFRESH_DURATION * 1000)) break;
-
-        sleep(REFRESH_DURATION);
     }
     return 0;
 }
@@ -395,7 +395,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (ctx.output_format == FORMAT_TABLE) {
+    if (ctx.output_format == FORMAT_TABLE && ctx.output_mode == MODE_CONTINUOUS) {
         if (setup_terminal() < 0) {
             cleanup_context(&ctx);
             return 1;
@@ -417,8 +417,9 @@ int main(int argc, char *argv[]) {
         result = monitor_temperatures_json(&ctx);
     } else if (ctx.output_format == FORMAT_TABLE && ctx.output_mode == MODE_CONTINUOUS) {
         result = run_monitoring_loop(&ctx);
-    } else { // FORMAT_TABLE && MODE_ONCE
+    } else {
         result = monitor_temperatures_table(&ctx);
+        printf("\033[%dB\n", ctx.device_count + 2);
     }
 
     cleanup_context(&ctx);

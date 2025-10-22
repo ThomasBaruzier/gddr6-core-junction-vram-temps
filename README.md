@@ -24,17 +24,13 @@ If you don't have the dependencies, you can use Docker for the build (will downl
 git clone https://github.com/ThomasBaruzier/gddr6-core-junction-vram-temps && cd gddr6-core-junction-vram-temps && ./build-docker.sh && sudo ./gputemps
 ```
 
-Use --json to output GPU temperatures in JSON format.
-
-Use --once to output temperatures a single time. By default, the program runs in continuous (watch) mode.
-
 If this didn't work, please continue reading
 
 <br>
 
 ## Dependencies
 
-- libpci-dev 
+- libpci-dev
 ```
 sudo apt install libpci-dev
 ```
@@ -56,13 +52,34 @@ If you get the error `nvml.h: No such file or directory`, try adding `-I/path/to
 
 <br>
 
-## Executing
+## Usage
+
+By default, the program runs in a continuously refreshing table containing all temperature data.
 
 ```
 sudo ./gputemps
 ```
+Press any key or `CTRL+C` to exit.
 
-Press any key or `CTRL+C` to exit
+### Optional CLI arguments:
+
+- `--once`: Output temperatures a single time and then exit.
+- `--json`: Output temperatures in JSONL format, one object per line.
+
+## JSON Format
+
+- `timestamp`: Unix timestamp of the reading.
+- `gpus`: An array of GPU data objects.
+  - `index`: The GPU's device index.
+  - `core`: Core temperature in Celsius.
+  - `junction`: Junction (hotspot) temperature in Celsius.
+  - `vram`: VRAM temperature in Celsius.
+
+### Example:
+
+```json
+{"timestamp":1678886400,"gpus":[{"index":0,"core":55,"junction":68,"vram":72}]}
+```
 
 <br>
 
@@ -78,7 +95,7 @@ sudo reboot
 ```
 
 - Disabling Secure Boot
-  
+
 This can be done in the UEFI/BIOS configuration or using [mokutil](https://wiki.debian.org/SecureBoot#Disabling.2Fre-enabling_Secure_Boot):
 
 ```
