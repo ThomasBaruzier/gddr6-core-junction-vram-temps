@@ -24,6 +24,10 @@ If you don't have the dependencies, you can use Docker for the build (will downl
 git clone https://github.com/ThomasBaruzier/gddr6-core-junction-vram-temps && cd gddr6-core-junction-vram-temps && ./build-docker.sh && sudo ./gputemps
 ```
 
+Use --json to output GPU temperatures in JSON format.
+
+Use --once to output temperatures a single time. By default, the program runs in continuous (watch) mode.
+
 If this didn't work, please continue reading
 
 <br>

@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <signal.h>
 #include <termios.h>
+#include <time.h>
 
 #define REFRESH_DURATION 1
 #define BUFFER_SIZE 1024
@@ -37,6 +38,16 @@ const uint32_t VRAM_TEMP_DANGER = 95;
 static volatile sig_atomic_t running = 1;
 static struct termios orig_termios;
 
+typedef enum {
+    FORMAT_TABLE,
+    FORMAT_JSON
+} OutputFormat;
+
+typedef enum {
+    MODE_CONTINUOUS,
+    MODE_ONCE
+} OutputMode;
+
 typedef struct {
     nvmlReturn_t result;
     unsigned int device_count;
@@ -44,6 +55,8 @@ typedef struct {
     struct pci_access *pacc;
     char output_buffer[BUFFER_SIZE];
     size_t buffer_pos;
+    OutputMode output_mode;
+    OutputFormat output_format;
 } Context;
 
 typedef struct {
@@ -220,8 +233,6 @@ static int read_register_temp(struct pci_dev *dev, uint32_t offset, uint32_t *te
 
     munmap(map_base, PG_SZ);
     close(fd);
-
-    return (*temp < 0x7f) ? 0 : -1;
 }
 
 static int get_gpu_temps(Context *ctx, unsigned int index, GpuDevice *gpu) {
@@ -254,7 +265,7 @@ static int get_gpu_temps(Context *ctx, unsigned int index, GpuDevice *gpu) {
     return -1;
 }
 
-static int monitor_temperatures(Context *ctx) {
+static int monitor_temperatures_table(Context *ctx) {
     static int refresh_counter = 0;
     int valid_readings = 0;
 
@@ -273,6 +284,28 @@ static int monitor_temperatures(Context *ctx) {
 
     buffer_append(ctx, "\033[%dA", valid_readings + 2);
     printf("%s", ctx->output_buffer);
+    fflush(stdout);
+    return 0;
+}
+
+static int monitor_temperatures_json(Context *ctx) {
+    time_t now = time(NULL);
+    printf("{\"timestamp\":%ld,\"gpus\":[", (long)now);
+
+    int first = 1;
+    for (unsigned int i = 0; i < ctx->device_count; i++) {
+        GpuDevice gpu = {0};
+        if (get_gpu_temps(ctx, i, &gpu) != 0) return -1;
+
+        if (!first) {
+            printf(",");
+        }
+        printf("{\"index\":%u,\"core\":%u,\"junction\":%u,\"vram\":%u}",
+               i, gpu.gpu_temp, gpu.junction_temp, gpu.vram_temp);
+        first = 0;
+    }
+    printf("]}\n");
+    fflush(stdout);
     return 0;
 }
 
@@ -287,8 +320,6 @@ static int init_monitoring(Context *ctx) {
     signal(SIGTERM, signal_handler);
     signal(SIGHUP, signal_handler);
 
-    printf(CURSOR_HIDE);
-    atexit(restore_cursor);
     return 0;
 }
 
@@ -307,24 +338,89 @@ static int handle_input(int duration_ms) {
 
 static int run_monitoring_loop(Context *ctx) {
     while (running) {
-        if (monitor_temperatures(ctx) != 0) return -1;
+        if (monitor_temperatures_table(ctx) != 0) return -1;
         if (handle_input(REFRESH_DURATION * 1000)) break;
     }
 
     printf("\033[%dB", ctx->device_count + 2);
     printf("\n");
+    fflush(stdout);
     return 0;
 }
 
-int main(void) {
-    Context ctx = {0};
+static int run_json_loop(Context *ctx) {
+    while (running) {
+        if (monitor_temperatures_json(ctx) != 0) return -1;
+        if (handle_input(REFRESH_DURATION * 1000)) break;
 
-    if (init_monitoring(&ctx) < 0 || setup_terminal() < 0) {
+        sleep(REFRESH_DURATION);
+    }
+    return 0;
+}
+
+static void print_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s [OPTIONS]\n"
+        "\n"
+        "Options:\n"
+        "  --json           Output temperatures in JSON format\n"
+        "  --once           Output temperatures once\n"
+        "  --help           Show this help message and exit\n"
+        "\n"
+        "Examples:\n"
+        "  %s                Display and update table of GPU temperatures\n"
+        "  %s --json         Continuously output GPU temperatures in JSON format\n"
+        "  %s --once         Output temperatures once in table format\n"
+        "  %s --json --once  Output temperatures once in JSON format\n",
+        prog, prog, prog, prog, prog);
+}
+
+int main(int argc, char *argv[]) {
+    Context ctx = {0};
+    ctx.output_format = FORMAT_TABLE;
+    ctx.output_mode = MODE_CONTINUOUS;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0) {
+            ctx.output_format = FORMAT_JSON;
+        } else if (strcmp(argv[i], "--once") == 0) {
+            ctx.output_mode = MODE_ONCE;
+        } else if (strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    if (ctx.output_format == FORMAT_TABLE) {
+        if (setup_terminal() < 0) {
+            cleanup_context(&ctx);
+            return 1;
+        }
+        printf(CURSOR_HIDE);
+        fflush(stdout);
+        atexit(restore_cursor);
+    }
+
+    if (init_monitoring(&ctx) < 0) {
         cleanup_context(&ctx);
         return 1;
     }
 
-    int result = run_monitoring_loop(&ctx);
+    int result;
+    if (ctx.output_format == FORMAT_JSON && ctx.output_mode == MODE_CONTINUOUS) {
+        result = run_json_loop(&ctx);
+    } else if (ctx.output_format == FORMAT_JSON && ctx.output_mode == MODE_ONCE) {
+        result = monitor_temperatures_json(&ctx);
+    } else if (ctx.output_format == FORMAT_TABLE && ctx.output_mode == MODE_CONTINUOUS) {
+        result = run_monitoring_loop(&ctx);
+    } else { // FORMAT_TABLE && MODE_ONCE
+        result = monitor_temperatures_table(&ctx);
+    }
+
     cleanup_context(&ctx);
     return result == 0 ? 0 : 1;
 }
