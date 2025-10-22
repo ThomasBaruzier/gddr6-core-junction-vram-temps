@@ -66,7 +66,7 @@ Press any key or `CTRL+C` to exit.
 - `--once`: Output temperatures a single time and then exit.
 - `--json`: Output temperatures in JSONL format, one object per line.
 
-## JSON Format
+### JSON Format
 
 - `timestamp`: Unix timestamp of the reading.
 - `gpus`: An array of GPU data objects.
@@ -75,7 +75,7 @@ Press any key or `CTRL+C` to exit.
   - `junction`: Junction (hotspot) temperature in Celsius.
   - `vram`: VRAM temperature in Celsius.
 
-### Example:
+#### Example:
 
 ```json
 {"timestamp":1678886400,"gpus":[{"index":0,"core":55,"junction":68,"vram":72}]}
