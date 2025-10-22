@@ -417,7 +417,7 @@ int main(int argc, char *argv[]) {
         result = monitor_temperatures_json(&ctx);
     } else if (ctx.output_format == FORMAT_TABLE && ctx.output_mode == MODE_CONTINUOUS) {
         result = run_monitoring_loop(&ctx);
-    } else {
+    } else { // FORMAT_TABLE && MODE_ONCE
         result = monitor_temperatures_table(&ctx);
         printf("\033[%dB\n", ctx.device_count + 2);
     }
