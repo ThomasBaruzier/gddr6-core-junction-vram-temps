@@ -94,6 +94,10 @@ sudo update-grub
 sudo reboot
 ```
 
+**Security note:** `iomem=relaxed` allows root processes to access device 
+memory regions through `/dev/mem`. This is a minor security tradeoff on 
+single-user desktops, and may not be appropriate for other environments.
+
 - Disabling Secure Boot
 
 This can be done in the UEFI/BIOS configuration or using [mokutil](https://wiki.debian.org/SecureBoot#Disabling.2Fre-enabling_Secure_Boot):
