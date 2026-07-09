@@ -314,7 +314,7 @@ static void replace_suffix(
     if (len - suffix_len + replacement_len >= s_size)
         return;
 
-    strcpy(s + len - suffix_len, replacement);
+    memcpy(s + len - suffix_len, replacement, replacement_len + 1);
 }
 
 static void make_short_name(const char *name, char *out, size_t out_size) {
