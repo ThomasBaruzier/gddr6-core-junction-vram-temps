@@ -50,6 +50,12 @@ gcc gputemps.c -o gputemps -O3 -lnvidia-ml -lpci
 
 If you get the error `nvml.h: No such file or directory`, try adding `-I/path/to/cuda/targets/x86_64-linux/include`
 
+Example:
+
+```
+gcc gputemps.c -o gputemps -O3 -lnvidia-ml -lpci -I"$CUDA_HOME/targets/x86_64-linux/include"
+```
+
 <br>
 
 ## Usage
@@ -59,16 +65,31 @@ By default, the program runs in a continuously refreshing table containing all t
 ```
 sudo ./gputemps
 ```
+
 Press any key or `CTRL+C` to exit.
 
 ### Optional CLI arguments:
 
 - `--once`: Output temperatures a single time and then exit.
 - `--json`: Output temperatures in JSONL format, one object per line.
+- `--device <list>`: Monitor selected devices by index, UUID, or PCI BDF.
+- `--refresh-ms <ms>`: Set the refresh interval in milliseconds. Minimum is 50.
+
+Examples:
+
+```
+sudo ./gputemps --once
+sudo ./gputemps --json
+sudo ./gputemps --device 0
+sudo ./gputemps --device 0,2
+sudo ./gputemps --refresh-ms 100
+```
+
+The environment variable `NVIDIA_VISIBLE_DEVICES` is also respected when `--device` is not set.
 
 ### JSON Format
 
-- `timestamp`: Unix timestamp of the reading.
+- `timestamp`: Unix timestamp of the reading in milliseconds.
 - `gpus`: An array of GPU data objects.
   - `index`: The GPU's device index.
   - `core`: Core temperature in Celsius.
@@ -78,7 +99,31 @@ Press any key or `CTRL+C` to exit.
 #### Example:
 
 ```json
-{"timestamp":1678886400,"gpus":[{"index":0,"core":55,"junction":68,"vram":72}]}
+{"timestamp":1678886400000,"gpus":[{"index":0,"core":55,"junction":68,"vram":72}]}
+```
+
+<br>
+
+## Blackwell support
+
+Blackwell GPUs are detected through NVML when the installed NVML headers support GPU architecture detection.
+
+On Blackwell, hotspot reading is attempted automatically and VRAM reading is disabled for now. If enabled, you should see a message like this:
+
+```
+note: GPU 0 Blackwell: hotspot on, VRAM off
+```
+
+If hotspot could not be enabled, you should see:
+
+```
+warn: GPU 0 Blackwell: hotspot off, VRAM off
+```
+
+If your NVML headers are too old for architecture detection, junction and VRAM readings are disabled instead of guessing:
+
+```
+warn: NVML arch detection unavailable; junction/VRAM off
 ```
 
 <br>
@@ -94,8 +139,8 @@ sudo update-grub
 sudo reboot
 ```
 
-**Security note:** `iomem=relaxed` allows root processes to access device 
-memory regions through `/dev/mem`. This is a minor security tradeoff on 
+**Security note:** `iomem=relaxed` allows root processes to access device
+memory regions through `/dev/mem`. This is a minor security tradeoff on
 single-user desktops, and may not be appropriate for other environments.
 
 - Disabling Secure Boot
@@ -123,6 +168,7 @@ SecureBoot disabled
 <br>
 
 ## Should be working
+
 - RTX 4090 (AD102)
 - RTX 4080 Super (AD103)
 - RTX 4080 (AD103)
@@ -144,7 +190,14 @@ SecureBoot disabled
 
 <br>
 
+## Partial support
+
+- Blackwell GPUs: core temperature through NVML, hotspot attempted automatically, VRAM disabled for now
+
+<br>
+
 ## Not working
+
 - RTX 3070 (GA104)
 - RTX 3070 LHR (GA104)
 - Any other card not listed above
@@ -152,5 +205,6 @@ SecureBoot disabled
 <br>
 
 ## Credits
+
 - https://github.com/jjziets/gddr6_temps: For showing me how to get VRAM and Junction temps
 - https://github.com/olealgoritme/gddr6: For pioneering the method to access undocumented GPU registers, and this README
