@@ -985,6 +985,8 @@ static void monitor_temperatures_table(Context *ctx) {
 
     if (ctx->output_mode == MODE_CONTINUOUS)
         buffer_append(ctx, "\033[%dA", row_count + 2);
+    else
+        buffer_append(ctx, "\n");
 
     printf("%s", ctx->output_buffer);
     fflush(stdout);
