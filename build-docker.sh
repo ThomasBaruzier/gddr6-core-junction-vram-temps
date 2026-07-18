@@ -1,12 +1,28 @@
-#!/bin/bash
+#!/bin/sh
 
-set -e
+set -eu
+
 cd "$(dirname "$0")"
 
-docker build -t gputemps-builder .
-docker create --name temp-container gputemps-builder
-docker cp temp-container:/app/gputemps ./gputemps
-docker rm temp-container
+image=gputemps-builder
+container=
 
+cleanup()
+{
+    if [ -n "$container" ]; then
+        docker rm -f "$container" >/dev/null 2>&1 || true
+    fi
+}
+
+trap cleanup EXIT HUP INT TERM
+
+docker build -t "$image" .
+container=$(docker create "$image")
+docker cp "$container:/app/gputemps" ./gputemps
 chmod +x ./gputemps
-echo $'\nBuild done. Run with: sudo ./gputemps\n'
+
+cleanup
+container=
+trap - EXIT HUP INT TERM
+
+printf '\nBuild done. Run with: sudo ./gputemps\n\n'

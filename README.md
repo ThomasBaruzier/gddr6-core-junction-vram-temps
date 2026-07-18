@@ -1,210 +1,228 @@
-## Core, Junction, and VRAM temperature reader for Linux + GDDR6/GDDR6X GPUs
+# GPU temperature monitor for NVIDIA GPUs on Linux
 
-<br>
+`gputemps` displays core, junction, and VRAM temperatures for compatible NVIDIA GPUs with GDDR6, GDDR6X, or GDDR7 memory.
 
-![image](https://github.com/user-attachments/assets/f92c9e98-07cc-4bc9-964d-ce616cfbc28c)
+![gputemps temperature table](https://github.com/user-attachments/assets/f92c9e98-07cc-4bc9-964d-ce616cfbc28c)
 
-<br>
+> [!WARNING]
+> This project is experimental and uses undocumented GPU temperature sensors. It is provided as-is without warranty.
 
-Warning: This repo is experimental and may not work as intended. The code is provided as-is without any warranty of any kind. If you have a problem, please open an issue!
+## Quick start
 
-<br>
+Install the required development packages, build the program, and run it as root:
 
-## Quickstart
-
-Assuming you have libpci and cuda, you can directly build and run the project like this:
-
-```
-curl -sO https://raw.githubusercontent.com/ThomasBaruzier/gddr6-core-junction-vram-temps/refs/heads/main/gputemps.c && gcc gputemps.c -o gputemps -O3 -lnvidia-ml -lpci -I"$CUDA_HOME/targets/x86_64-linux/include" && sudo ./gputemps
-```
-
-If you don't have the dependencies, you can use Docker for the build (will download cuda):
-
-```
-git clone https://github.com/ThomasBaruzier/gddr6-core-junction-vram-temps && cd gddr6-core-junction-vram-temps && ./build-docker.sh && sudo ./gputemps
-```
-
-If this didn't work, please continue reading
-
-<br>
-
-## Dependencies
-
-- libpci-dev
-```
-sudo apt install libpci-dev
-```
-
-- cuda
-```
-sudo apt install nvidia-cuda-toolkit
-```
-
-<br>
-
-## Building
-
-```
-gcc gputemps.c -o gputemps -O3 -lnvidia-ml -lpci
-```
-
-If you get the error `nvml.h: No such file or directory`, try adding `-I/path/to/cuda/targets/x86_64-linux/include`
-
-Example:
-
-```
-gcc gputemps.c -o gputemps -O3 -lnvidia-ml -lpci -I"$CUDA_HOME/targets/x86_64-linux/include"
-```
-
-<br>
-
-## Usage
-
-By default, the program runs in a continuously refreshing table containing all temperature data.
-
-```
+```sh
+sudo apt install gcc make libpci-dev nvidia-cuda-toolkit
+git clone https://github.com/ThomasBaruzier/gddr6-core-junction-vram-temps
+cd gddr6-core-junction-vram-temps
+make
 sudo ./gputemps
 ```
 
-Press any key or `CTRL+C` to exit.
+Press any key or `Ctrl+C` to exit.
 
-### Optional CLI arguments:
+## Usage
 
-- `--once`: Output temperatures a single time and then exit.
-- `--json`: Output temperatures in JSONL format, one object per line.
-- `--device <list>`: Monitor selected devices by index, UUID, or PCI BDF.
-- `--refresh-ms <ms>`: Set the refresh interval in milliseconds. Minimum is 50.
+Run the live temperature table:
 
-Examples:
-
+```sh
+sudo ./gputemps
 ```
+
+Display one reading and exit:
+
+```sh
 sudo ./gputemps --once
+```
+
+Output JSON Lines:
+
+```sh
 sudo ./gputemps --json
+```
+
+Monitor one or more GPUs:
+
+```sh
 sudo ./gputemps --device 0
 sudo ./gputemps --device 0,2
+```
+
+Devices can be selected by NVML index, UUID, or PCI BDF. When `--device` is not specified, `NVIDIA_VISIBLE_DEVICES` is respected.
+
+Change the refresh interval:
+
+```sh
 sudo ./gputemps --refresh-ms 100
 ```
 
-The environment variable `NVIDIA_VISIBLE_DEVICES` is also respected when `--device` is not set.
+The minimum refresh interval is 50 milliseconds and the default is 1000 milliseconds.
 
-### JSON Format
+### Options
 
-- `timestamp`: Unix timestamp of the reading in milliseconds.
-- `gpus`: An array of GPU data objects.
-  - `index`: The GPU's device index.
-  - `core`: Core temperature in Celsius.
-  - `junction`: Junction (hotspot) temperature in Celsius.
-  - `vram`: VRAM temperature in Celsius.
+- `--device <list>`: Monitor selected devices by index, UUID, or PCI BDF.
+- `--json`: Output one JSON object per line.
+- `--once`: Output one reading and exit.
+- `--refresh-ms <ms>`: Set the refresh interval in milliseconds.
+- `--help`: Show the help message.
 
-#### Example:
+## JSON output
+
+Each object contains a timestamp and the selected GPU readings:
 
 ```json
 {"timestamp":1678886400000,"gpus":[{"index":0,"core":55,"junction":68,"vram":72}]}
 ```
 
-<br>
+- `timestamp`: Unix timestamp in milliseconds.
+- `index`: NVML device index.
+- `core`: GPU core temperature in Celsius.
+- `junction`: GPU junction temperature in Celsius.
+- `vram`: VRAM temperature in Celsius.
 
-## Blackwell support
+Unavailable readings are returned as `null`.
 
-Blackwell GPUs are detected through NVML when the installed NVML headers support GPU architecture detection.
+## Building
 
-On Blackwell, hotspot reading is attempted automatically and VRAM reading is disabled for now. If enabled, you should see a message like this:
+The build requires:
 
+- a C11 compiler
+- GNU Make
+- libpci development files
+- NVIDIA NVML headers and library
+
+Build with:
+
+```sh
+make
 ```
-note: GPU 0 Blackwell: hotspot on, VRAM off
+
+If `nvml.h` is outside the default include path:
+
+```sh
+make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 ```
 
-If hotspot could not be enabled, you should see:
+Remove generated files with:
 
-```
-warn: GPU 0 Blackwell: hotspot off, VRAM off
-```
-
-If your NVML headers are too old for architecture detection, junction and VRAM readings are disabled instead of guessing:
-
-```
-warn: NVML arch detection unavailable; junction/VRAM off
+```sh
+make clean
 ```
 
-<br>
+Install or uninstall the program with:
 
-## Troubleshooting (in case of mmap error)
-
-- The following kernel boot parameter should be used: `iomem=relaxed`
-
+```sh
+sudo make install
+sudo make uninstall
 ```
+
+## Docker build
+
+Build the executable in Docker and copy it to the repository directory:
+
+```sh
+./build-docker.sh
+sudo ./gputemps
+```
+
+## GDDR7 support
+
+RTX 5090 GDDR7 VRAM temperature monitoring is supported experimentally. The `VRAM` column and JSON `vram` property show the hottest available memory temperature.
+
+Other Blackwell GPUs currently provide core and junction temperatures only. Their VRAM temperature is shown as `N/A` or `null` until support is added.
+
+## Troubleshooting
+
+### Junction or VRAM shows `N/A`
+
+The program needs access to GPU memory-mapped temperature sensors through `/dev/mem`. On many systems, this requires adding `iomem=relaxed` to the kernel command line.
+
+On systems using GRUB, edit:
+
+```sh
 sudo nano /etc/default/grub
+```
+
+Add `iomem=relaxed`, for example:
+
+```text
 GRUB_CMDLINE_LINUX_DEFAULT="quiet splash iomem=relaxed"
+```
+
+Apply the change and reboot:
+
+```sh
 sudo update-grub
 sudo reboot
 ```
 
-**Security note:** `iomem=relaxed` allows root processes to access device
-memory regions through `/dev/mem`. This is a minor security tradeoff on
-single-user desktops, and may not be appropriate for other environments.
+Secure Boot or kernel lockdown may also prevent access to `/dev/mem`. Check Secure Boot with:
 
-- Disabling Secure Boot
-
-This can be done in the UEFI/BIOS configuration or using [mokutil](https://wiki.debian.org/SecureBoot#Disabling.2Fre-enabling_Secure_Boot):
-
-```
-mokutil --disable-validation
+```sh
+sudo mokutil --sb
 ```
 
-Check state with:
+> [!CAUTION]
+> `iomem=relaxed` allows privileged processes broader access to device memory. Consider the security implications before enabling it, especially on shared systems.
+
+### Permission denied
+
+Run the program as root:
+
+```sh
+sudo ./gputemps
 ```
-$ sudo mokutil --sb
-SecureBoot disabled
+
+### NVML headers are not found
+
+Install the NVIDIA CUDA toolkit or provide the NVML include directory when building:
+
+```sh
+make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 ```
 
-<br>
+## GPU support
 
-## Tested and working
+### Tested and working
 
-- RTX 3090 (GA102)
-- RTX 4060 Ti 16GB (AD106)
-- RTX 4060 Max-Q (AD107)
+- RTX 3090
+- RTX 4060 Ti 16GB
+- RTX 4060 Max-Q
 
-<br>
+### Expected to work
 
-## Should be working
+- RTX 5090, experimental GDDR7 support
+- RTX 4090
+- RTX 4080 Super
+- RTX 4080
+- RTX 4070 Ti Super
+- RTX 4070 Ti
+- RTX 4070 Super
+- RTX 4070
+- RTX 3090 Ti
+- RTX 3080 Ti
+- RTX 3080
+- RTX 3080 LHR
+- RTX A2000
+- RTX A4500
+- RTX A5000
+- RTX A6000
+- L4
+- L40S
+- A10
 
-- RTX 4090 (AD102)
-- RTX 4080 Super (AD103)
-- RTX 4080 (AD103)
-- RTX 4070 Ti Super (AD103)
-- RTX 4070 Ti (AD104)
-- RTX 4070 Super (AD104)
-- RTX 4070 (AD104)
-- RTX 3090 Ti (GA102)
-- RTX 3080 Ti (GA102)
-- RTX 3080 (GA102)
-- RTX 3080 LHR (GA102)
-- RTX A2000 (GA106)
-- RTX A4500 (GA102)
-- RTX A5000 (GA102)
-- RTX A6000 (AD102)
-- L4 (AD104)
-- L40S (AD102)
-- A10 (GA102)
+### Partial support
 
-<br>
+- Blackwell GPUs other than RTX 5090: core and junction temperatures only
 
-## Partial support
+### Not working
 
-- Blackwell GPUs: core temperature through NVML, hotspot attempted automatically, VRAM disabled for now
-
-<br>
-
-## Not working
-
-- RTX 3070 (GA104)
-- RTX 3070 LHR (GA104)
-- Any other card not listed above
-
-<br>
+- RTX 3070
+- RTX 3070 LHR
+- Cards not listed above
 
 ## Credits
 
-- https://github.com/jjziets/gddr6_temps: For showing me how to get VRAM and Junction temps
-- https://github.com/olealgoritme/gddr6: For pioneering the method to access undocumented GPU registers, and this README
+- [jjziets/gddr6_temps](https://github.com/jjziets/gddr6_temps) for the original GDDR6 temperature work
+- [olealgoritme/gddr6](https://github.com/olealgoritme/gddr6) for the GDDR6, GDDR6X, and RTX 5090 temperature work
+- [sunnyyangyangyang/gddr7-temp](https://github.com/sunnyyangyangyang/gddr7-temp) for validating RTX 5090 GDDR7 temperature support
