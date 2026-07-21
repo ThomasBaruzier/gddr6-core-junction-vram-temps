@@ -4,11 +4,9 @@
 #include "sensors.h"
 
 #include <ctype.h>
-#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -36,15 +34,26 @@
 #define PCI_DEVICE_ID_SHIFT 16u
 #define PCI_BAR_IO_SPACE 0x1u
 
-#define OFFSET_JUNCTION_DEFAULT 0x0002046Cu
-#define OFFSET_JUNCTION_BLACKWELL 0x00AD046Cu
-#define OFFSET_VRAM_DEFAULT 0x0000E2A8u
+#define PCI_DEVICE_ID_RTX_5090 0x2B85u
+#define PCI_DEVICE_ID_RTX_5070_TI 0x2C05u
+
+#define JUNCTION_THERM_BYTE_OFFSET 0x0002046Cu
+#define VRAM_GDDR6_ADC_OFFSET 0x0000E2A8u
 
 #define JUNCTION_BYTE_SHIFT 8u
 #define JUNCTION_BYTE_MASK 0xFFu
 #define VRAM_ADC_MASK 0xFFFu
 #define VRAM_ADC_DIVISOR 32u
 #define TEMP_VALID_LIMIT 0x7Fu
+
+#define BLACKWELL_BJT_BASE 0x00AD0A90u
+#define BLACKWELL_BJT_COUNT 6u
+#define BLACKWELL_BJT_STRIDE 0x4u
+#define BLACKWELL_BJT_VALID_BIT 0x40000000u
+#define BLACKWELL_BJT_VALUE_MASK 0xFFFFu
+#define BLACKWELL_BJT_SPAN \
+    ((BLACKWELL_BJT_COUNT - 1u) * BLACKWELL_BJT_STRIDE + \
+     sizeof(uint32_t))
 
 #define GDDR7_DQR_BASE 0x009024C0u
 #define GDDR7_DQR_VALID_OFFSET 0x10u
@@ -53,8 +62,6 @@
 #define GDDR7_DQR_SPAN \
     ((GDDR7_DQR_MAX_SLOTS - 1u) * GDDR7_DQR_STRIDE + \
      GDDR7_DQR_VALID_OFFSET + sizeof(uint32_t))
-
-#define NVML_ARCH_BLACKWELL_VALUE 10u
 
 #ifndef NVML_DEVICE_NAME_BUFFER_SIZE
 #define NVML_DEVICE_NAME_BUFFER_SIZE 64
@@ -65,26 +72,25 @@
 #endif
 
 _Static_assert(
+    BLACKWELL_BJT_SPAN == 0x18u,
+    "unexpected Blackwell BJT span"
+);
+
+_Static_assert(
     GDDR7_DQR_SPAN == 0x0003C014u,
     "unexpected GDDR7 DQR span"
 );
 
 typedef enum {
-    VRAM_BACKEND_NONE,
-    VRAM_BACKEND_GDDR6_ADC,
-    VRAM_BACKEND_GDDR7_DQR
-} VramBackend;
+    JUNCTION_THERM_BYTE,
+    JUNCTION_BLACKWELL_BJT
+} JunctionMethod;
 
-typedef struct {
-    bool known;
-    unsigned int value;
-    bool is_blackwell;
-} GpuArchitecture;
-
-typedef nvmlReturn_t (*NvmlGetArchitectureFn)(
-    nvmlDevice_t device,
-    unsigned int *architecture
-);
+typedef enum {
+    VRAM_NONE,
+    VRAM_GDDR6_ADC,
+    VRAM_GDDR7_DQR
+} VramMethod;
 
 typedef struct {
     void *mapping;
@@ -94,10 +100,8 @@ typedef struct {
 
 typedef struct {
     uint16_t device_id;
-    uint32_t junction_offset;
-    VramBackend vram_backend;
-    uint32_t vram_offset;
-    size_t vram_span;
+    JunctionMethod junction_method;
+    VramMethod vram_method;
 } DeviceProfile;
 
 typedef struct {
@@ -105,11 +109,11 @@ typedef struct {
     nvmlPciInfo_t pci_info;
     char short_name[NVML_DEVICE_NAME_BUFFER_SIZE];
     char uuid[NVML_DEVICE_UUID_BUFFER_SIZE];
-    GpuArchitecture arch;
     GpuReading reading;
     MmioRegion junction_mmio;
     MmioRegion vram_mmio;
-    VramBackend vram_backend;
+    JunctionMethod junction_method;
+    VramMethod vram_method;
     bool present;
     bool selected;
     bool has_pci;
@@ -124,26 +128,16 @@ struct Monitor {
 
 static const DeviceProfile device_profiles[] = {
     {
-        .device_id = 0x2B85u,
-        .junction_offset = OFFSET_JUNCTION_BLACKWELL,
-        .vram_backend = VRAM_BACKEND_GDDR7_DQR,
-        .vram_offset = GDDR7_DQR_BASE,
-        .vram_span = GDDR7_DQR_SPAN
+        .device_id = PCI_DEVICE_ID_RTX_5090,
+        .junction_method = JUNCTION_BLACKWELL_BJT,
+        .vram_method = VRAM_GDDR7_DQR
+    },
+    {
+        .device_id = PCI_DEVICE_ID_RTX_5070_TI,
+        .junction_method = JUNCTION_BLACKWELL_BJT,
+        .vram_method = VRAM_NONE
     }
 };
-
-static void log_message(const char *level, const char *format, ...)
-{
-    va_list args;
-
-    fprintf(stderr, "%s: ", level);
-
-    va_start(args, format);
-    vfprintf(stderr, format, args);
-    va_end(args);
-
-    fputc('\n', stderr);
-}
 
 static bool starts_with(const char *text, const char *prefix)
 {
@@ -198,59 +192,6 @@ static void make_short_name(const char *name, char *output, size_t size)
 
     copy_string(output, size, start);
     replace_suffix(output, size, " SUPER", " S");
-}
-
-static NvmlGetArchitectureFn resolve_architecture_function(void)
-{
-    static NvmlGetArchitectureFn function;
-    static bool resolved;
-
-    if (!resolved) {
-        resolved = true;
-
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-        function = (NvmlGetArchitectureFn)dlsym(
-            RTLD_DEFAULT,
-            "nvmlDeviceGetArchitecture"
-        );
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
-    }
-
-    return function;
-}
-
-static GpuArchitecture get_gpu_architecture(nvmlDevice_t device)
-{
-    GpuArchitecture architecture = {0};
-    NvmlGetArchitectureFn get_architecture =
-        resolve_architecture_function();
-    unsigned int value;
-
-    if (get_architecture &&
-        get_architecture(device, &value) == NVML_SUCCESS) {
-        architecture.known = true;
-        architecture.value = value;
-        architecture.is_blackwell =
-            value == NVML_ARCH_BLACKWELL_VALUE;
-    }
-
-    return architecture;
-}
-
-static bool architecture_uses_default_mmio(
-    const GpuArchitecture *architecture
-)
-{
-    return architecture &&
-        architecture->known &&
-        !architecture->is_blackwell &&
-        architecture->value > 0 &&
-        architecture->value < NVML_ARCH_BLACKWELL_VALUE;
 }
 
 static const DeviceProfile *find_device_profile(uint16_t device_id)
@@ -379,7 +320,7 @@ static Temperature invalid_temperature(void)
     return (Temperature){0};
 }
 
-static Temperature sample_junction(const MmioRegion *region)
+static Temperature sample_therm_byte(const MmioRegion *region)
 {
     uint32_t raw;
     uint32_t value;
@@ -405,7 +346,44 @@ static Temperature sample_junction(const MmioRegion *region)
     };
 }
 
-static Temperature sample_gddr6(const MmioRegion *region)
+static Temperature sample_blackwell_bjt(const MmioRegion *region)
+{
+    uint32_t hottest = 0;
+    bool found = false;
+
+    if (!region->regs)
+        return invalid_temperature();
+
+    for (unsigned int channel = 0;
+         channel < BLACKWELL_BJT_COUNT;
+         channel++) {
+        uint32_t raw = read_mmio32(
+            region,
+            (size_t)channel * BLACKWELL_BJT_STRIDE
+        );
+        uint32_t value;
+
+        if (raw == UINT32_MAX || !(raw & BLACKWELL_BJT_VALID_BIT))
+            continue;
+
+        value = raw & BLACKWELL_BJT_VALUE_MASK;
+
+        if (!found || value > hottest) {
+            hottest = value;
+            found = true;
+        }
+    }
+
+    if (!found)
+        return invalid_temperature();
+
+    return (Temperature){
+        .value = (int)(hottest >> 8),
+        .valid = true
+    };
+}
+
+static Temperature sample_gddr6_adc(const MmioRegion *region)
 {
     uint32_t raw;
     uint32_t value;
@@ -503,18 +481,34 @@ static void sample_core(GpuDevice *gpu)
 static void sample_gpu(GpuDevice *gpu)
 {
     sample_core(gpu);
-    gpu->reading.junction = sample_junction(&gpu->junction_mmio);
 
-    switch (gpu->vram_backend) {
-    case VRAM_BACKEND_GDDR6_ADC:
-        gpu->reading.vram = sample_gddr6(&gpu->vram_mmio);
+    switch (gpu->junction_method) {
+    case JUNCTION_THERM_BYTE:
+        gpu->reading.junction =
+            sample_therm_byte(&gpu->junction_mmio);
         break;
 
-    case VRAM_BACKEND_GDDR7_DQR:
+    case JUNCTION_BLACKWELL_BJT:
+        gpu->reading.junction =
+            sample_blackwell_bjt(&gpu->junction_mmio);
+        break;
+
+    default:
+        gpu->reading.junction = invalid_temperature();
+        break;
+    }
+
+    switch (gpu->vram_method) {
+    case VRAM_GDDR6_ADC:
+        gpu->reading.vram =
+            sample_gddr6_adc(&gpu->vram_mmio);
+        break;
+
+    case VRAM_GDDR7_DQR:
         gpu->reading.vram = sample_gddr7(&gpu->vram_mmio);
         break;
 
-    case VRAM_BACKEND_NONE:
+    case VRAM_NONE:
     default:
         gpu->reading.vram = invalid_temperature();
         break;
@@ -811,6 +805,77 @@ static struct pci_dev *match_pci_device(
     return NULL;
 }
 
+static void setup_junction_mmio(
+    GpuDevice *gpu,
+    struct pci_dev *device,
+    int memory_fd,
+    long page_size
+)
+{
+    uint32_t offset;
+    size_t span;
+
+    switch (gpu->junction_method) {
+    case JUNCTION_THERM_BYTE:
+        offset = JUNCTION_THERM_BYTE_OFFSET;
+        span = sizeof(uint32_t);
+        break;
+
+    case JUNCTION_BLACKWELL_BJT:
+        offset = BLACKWELL_BJT_BASE;
+        span = BLACKWELL_BJT_SPAN;
+        break;
+
+    default:
+        return;
+    }
+
+    map_mmio(
+        memory_fd,
+        device,
+        offset,
+        span,
+        page_size,
+        &gpu->junction_mmio
+    );
+}
+
+static void setup_vram_mmio(
+    GpuDevice *gpu,
+    struct pci_dev *device,
+    int memory_fd,
+    long page_size
+)
+{
+    uint32_t offset;
+    size_t span;
+
+    switch (gpu->vram_method) {
+    case VRAM_GDDR6_ADC:
+        offset = VRAM_GDDR6_ADC_OFFSET;
+        span = sizeof(uint32_t);
+        break;
+
+    case VRAM_GDDR7_DQR:
+        offset = GDDR7_DQR_BASE;
+        span = GDDR7_DQR_SPAN;
+        break;
+
+    case VRAM_NONE:
+    default:
+        return;
+    }
+
+    map_mmio(
+        memory_fd,
+        device,
+        offset,
+        span,
+        page_size,
+        &gpu->vram_mmio
+    );
+}
+
 static void setup_gpu_mmio(
     GpuDevice *gpu,
     struct pci_access *access,
@@ -820,9 +885,9 @@ static void setup_gpu_mmio(
 {
     struct pci_dev *device;
     const DeviceProfile *profile;
-    uint32_t junction_offset = 0;
-    uint32_t vram_offset = 0;
-    size_t vram_span = 0;
+
+    gpu->junction_method = JUNCTION_THERM_BYTE;
+    gpu->vram_method = VRAM_GDDR6_ADC;
 
     if (!gpu->has_pci)
         return;
@@ -835,42 +900,22 @@ static void setup_gpu_mmio(
     profile = find_device_profile(device->device_id);
 
     if (profile) {
-        junction_offset = profile->junction_offset;
-        gpu->vram_backend = profile->vram_backend;
-        vram_offset = profile->vram_offset;
-        vram_span = profile->vram_span;
-    } else if (gpu->arch.known) {
-        if (gpu->arch.is_blackwell) {
-            junction_offset = OFFSET_JUNCTION_BLACKWELL;
-        } else if (architecture_uses_default_mmio(&gpu->arch)) {
-            junction_offset = OFFSET_JUNCTION_DEFAULT;
-            gpu->vram_backend = VRAM_BACKEND_GDDR6_ADC;
-            vram_offset = OFFSET_VRAM_DEFAULT;
-            vram_span = sizeof(uint32_t);
-        }
+        gpu->junction_method = profile->junction_method;
+        gpu->vram_method = profile->vram_method;
     }
 
-    if (junction_offset != 0) {
-        map_mmio(
-            memory_fd,
-            device,
-            junction_offset,
-            sizeof(uint32_t),
-            page_size,
-            &gpu->junction_mmio
-        );
-    }
-
-    if (gpu->vram_backend != VRAM_BACKEND_NONE) {
-        map_mmio(
-            memory_fd,
-            device,
-            vram_offset,
-            vram_span,
-            page_size,
-            &gpu->vram_mmio
-        );
-    }
+    setup_junction_mmio(
+        gpu,
+        device,
+        memory_fd,
+        page_size
+    );
+    setup_vram_mmio(
+        gpu,
+        device,
+        memory_fd,
+        page_size
+    );
 }
 
 static void log_sensor_warnings(
@@ -878,61 +923,20 @@ static void log_sensor_warnings(
     const GpuDevice *gpu
 )
 {
-    bool junction_enabled = gpu->junction_mmio.regs != NULL;
-    bool vram_enabled = gpu->vram_mmio.regs != NULL;
-
-    if (gpu->vram_backend == VRAM_BACKEND_GDDR7_DQR) {
-        if (!junction_enabled || !vram_enabled) {
-            log_message(
-                "warn",
-                "GPU %u Blackwell: hotspot %s, VRAM %s",
-                index,
-                junction_enabled ? "on" : "off",
-                vram_enabled ? "on" : "off"
-            );
-        }
-
-        return;
-    }
-
-    if (!gpu->arch.known) {
-        log_message(
-            "warn",
-            "GPU %u: NVML arch unknown; junction/VRAM off",
+    if (!gpu->junction_mmio.regs) {
+        fprintf(
+            stderr,
+            "gputemps: GPU %u: junction sensor unavailable\n",
             index
         );
-        return;
     }
 
-    if (gpu->arch.is_blackwell) {
-        if (!junction_enabled) {
-            log_message(
-                "warn",
-                "GPU %u Blackwell: hotspot off, VRAM off",
-                index
-            );
-        }
-
-        return;
-    }
-
-    if (!architecture_uses_default_mmio(&gpu->arch)) {
-        log_message(
-            "warn",
-            "GPU %u: unsupported NVML arch=%u; junction/VRAM off",
-            index,
-            gpu->arch.value
-        );
-        return;
-    }
-
-    if (!junction_enabled || !vram_enabled) {
-        log_message(
-            "warn",
-            "GPU %u: junction %s, VRAM %s",
-            index,
-            junction_enabled ? "on" : "off",
-            vram_enabled ? "on" : "off"
+    if (gpu->vram_method != VRAM_NONE &&
+        !gpu->vram_mmio.regs) {
+        fprintf(
+            stderr,
+            "gputemps: GPU %u: VRAM sensor unavailable\n",
+            index
         );
     }
 }
@@ -1032,7 +1036,6 @@ int monitor_init(Monitor **output, const MonitorOptions *options)
         }
 
         gpu->present = true;
-        gpu->arch = get_gpu_architecture(gpu->nvml);
 
         if (nvmlDeviceGetName(
                 gpu->nvml,

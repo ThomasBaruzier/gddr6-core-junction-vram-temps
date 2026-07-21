@@ -125,11 +125,13 @@ Build the executable in Docker and copy it to the repository directory:
 sudo ./gputemps
 ```
 
-## GDDR7 support
+## Blackwell support
 
-RTX 5090 GDDR7 VRAM temperature monitoring is supported experimentally. The `VRAM` column and JSON `vram` property show the hottest available memory temperature.
+RTX 5090 junction and GDDR7 VRAM temperature monitoring are supported experimentally. The `VRAM` column and JSON `vram` property show the hottest available memory temperature.
 
-Other Blackwell GPUs currently provide core and junction temperatures only. Their VRAM temperature is shown as `N/A` or `null` until support is added.
+RTX 5070 Ti provides core and junction temperatures only. Its VRAM temperature is shown as `N/A` or `null`.
+
+Blackwell junction temperature is derived from the hottest valid internal temperature channel. This is an undocumented, experimental method.
 
 ## Troubleshooting
 
@@ -213,16 +215,16 @@ make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 
 ### Partial support
 
-- Blackwell GPUs other than RTX 5090: core and junction temperatures only
+- RTX 5070 Ti: core and junction temperatures only
 
 ### Not working
 
 - RTX 3070
 - RTX 3070 LHR
-- Cards not listed above
 
 ## Credits
 
 - [jjziets/gddr6_temps](https://github.com/jjziets/gddr6_temps) for the original GDDR6 temperature work
 - [olealgoritme/gddr6](https://github.com/olealgoritme/gddr6) for the GDDR6, GDDR6X, and RTX 5090 temperature work
-- [sunnyyangyangyang/gddr7-temp](https://github.com/sunnyyangyangyang/gddr7-temp) for validating RTX 5090 GDDR7 temperature support
+- [sunnyyangyangyang/gddr7-temp](https://github.com/sunnyyangyangyang/gddr7-temp) for RTX 5090 GDDR7 and Blackwell temperature work
+- [igor'sLAB](https://www.igorslab.de/en/blackwell-hotspot-ibhe-estimation-register-findings-download-nvidia-question/) for the Blackwell temperature register research

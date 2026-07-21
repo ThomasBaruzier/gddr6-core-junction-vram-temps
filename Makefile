@@ -22,7 +22,7 @@ NVML_HEADER ?= $(firstword $(wildcard \
 NVML_CPPFLAGS := $(if $(NVML_HEADER),-I$(dir $(NVML_HEADER)))
 BASE_CFLAGS := -std=c11 -Wall -Wextra -Wpedantic
 
-LDLIBS += -lnvidia-ml -lpci -ldl
+LDLIBS += -lnvidia-ml -lpci
 
 SOURCES := src/main.c src/sensors.c
 OBJECTS := $(SOURCES:.c=.o)
