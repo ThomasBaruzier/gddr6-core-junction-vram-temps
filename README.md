@@ -1,11 +1,11 @@
 # GPU temperature monitor for NVIDIA GPUs on Linux
 
-`gputemps` displays core, junction, and VRAM temperatures for compatible NVIDIA GPUs with GDDR6, GDDR6X, or GDDR7 memory.
+`gputemps` displays GPU core, junction, and VRAM temperatures for compatible NVIDIA GPUs with GDDR6, GDDR6X, or GDDR7 memory.
 
 ![gputemps temperature table](https://github.com/user-attachments/assets/f92c9e98-07cc-4bc9-964d-ce616cfbc28c)
 
 > [!WARNING]
-> This project is experimental and uses undocumented GPU temperature sensors. It is provided as-is without warranty.
+> This project is experimental and reads undocumented GPU temperature sensors. It is provided as-is without warranty.
 
 ## Quick start
 
@@ -48,7 +48,9 @@ sudo ./gputemps --device 0
 sudo ./gputemps --device 0,2
 ```
 
-Devices can be selected by NVML index, UUID, or PCI BDF. When `--device` is not specified, `NVIDIA_VISIBLE_DEVICES` is respected.
+Devices can be selected by NVML index, UUID, or PCI BDF.
+
+When `--device` is not specified, `CUDA_VISIBLE_DEVICES` is used as a device filter if set. Otherwise, `NVIDIA_VISIBLE_DEVICES` is used.
 
 Change the refresh interval:
 
@@ -56,7 +58,7 @@ Change the refresh interval:
 sudo ./gputemps --refresh-ms 100
 ```
 
-The minimum refresh interval is 50 milliseconds and the default is 1000 milliseconds.
+The minimum refresh interval is 50 milliseconds. The default is 1000 milliseconds.
 
 ### Options
 
@@ -103,13 +105,13 @@ If `nvml.h` is outside the default include path:
 make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 ```
 
-Remove generated files with:
+Remove generated files:
 
 ```sh
 make clean
 ```
 
-Install or uninstall the program with:
+Install or uninstall the program:
 
 ```sh
 sudo make install
@@ -127,17 +129,22 @@ sudo ./gputemps
 
 ## Blackwell support
 
-RTX 5090 junction and GDDR7 VRAM temperature monitoring are supported experimentally. The `VRAM` column and JSON `vram` property show the hottest available memory temperature.
+Experimental junction and GDDR7 VRAM temperature support is included for RTX 5090, RTX 5080, RTX 5070 Ti, and RTX 5070.
 
-RTX 5070 Ti provides core and junction temperatures only. Its VRAM temperature is shown as `N/A` or `null`.
+On supported Blackwell GPUs:
 
-Blackwell junction temperature is derived from the hottest valid internal temperature channel. This is an undocumented, experimental method.
+- `JUNC` reports the hottest valid die thermal channel or hardware hotspot reading.
+- `VRAM` reports the hottest valid GDDR7 temperature source.
+
+The same values are available through the JSON `junction` and `vram` properties.
+
+There is no support (yet) for RTX 5060s. Contributions are welcomed.
 
 ## Troubleshooting
 
 ### Junction or VRAM shows `N/A`
 
-The program needs access to GPU memory-mapped temperature sensors through `/dev/mem`. On many systems, this requires adding `iomem=relaxed` to the kernel command line.
+The program reads memory-mapped GPU temperature sensors through `/dev/mem`. On many systems, this requires adding `iomem=relaxed` to the kernel command line.
 
 On systems using GRUB, edit:
 
@@ -191,9 +198,12 @@ make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 - RTX 4060 Ti 16GB
 - RTX 4060 Max-Q
 
-### Expected to work
+### Should work
 
-- RTX 5090, experimental GDDR7 support
+- RTX 5090
+- RTX 5080
+- RTX 5070 Ti
+- RTX 5070
 - RTX 4090
 - RTX 4080 Super
 - RTX 4080
@@ -212,10 +222,6 @@ make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 - L4
 - L40S
 - A10
-
-### Partial support
-
-- RTX 5070 Ti: core and junction temperatures only
 
 ### Not working
 

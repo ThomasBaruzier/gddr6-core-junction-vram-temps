@@ -23,7 +23,8 @@
 #define VRAM_TEMP_WARN 80
 #define VRAM_TEMP_DANGER 95
 
-#define VISIBLE_DEVICES_ENV "NVIDIA_VISIBLE_DEVICES"
+#define CUDA_VISIBLE_DEVICES_ENV "CUDA_VISIBLE_DEVICES"
+#define NVIDIA_VISIBLE_DEVICES_ENV "NVIDIA_VISIBLE_DEVICES"
 
 #define SEPARATOR "\xE2\x94\x82"
 #define CURSOR_HIDE "\x1B[?25l"
@@ -155,6 +156,11 @@ static void buffer_append(Context *ctx, const char *format, ...)
         ctx->buffer_pos += (size_t)written;
 }
 
+static int temperature_celsius(Temperature temperature)
+{
+    return temperature.millidegrees / 1000;
+}
+
 static const char *get_temp_color(int temperature, int warning, int danger)
 {
     if (temperature >= danger)
@@ -213,16 +219,20 @@ static void append_temp_cell(
     int danger
 )
 {
+    int celsius;
+
     if (!temperature.valid) {
         buffer_append(ctx, "  N/A   ");
         return;
     }
 
+    celsius = temperature_celsius(temperature);
+
     buffer_append(
         ctx,
         " %s%3d°C%s  ",
-        get_temp_color(temperature.value, warning, danger),
-        temperature.value,
+        get_temp_color(celsius, warning, danger),
+        celsius,
         COLOR_RESET
     );
 }
@@ -233,10 +243,16 @@ static void append_json_temp(
     Temperature temperature
 )
 {
-    if (temperature.valid)
-        buffer_append(ctx, "\"%s\":%d", name, temperature.value);
-    else
+    if (temperature.valid) {
+        buffer_append(
+            ctx,
+            "\"%s\":%d",
+            name,
+            temperature_celsius(temperature)
+        );
+    } else {
         buffer_append(ctx, "\"%s\":null", name);
+    }
 }
 
 static void update_column_widths(Context *ctx)
@@ -331,13 +347,18 @@ static void append_table_row(Context *ctx, const GpuReading *gpu)
     buffer_append(ctx, "%s", SEPARATOR);
     append_temp_cell(
         ctx,
-        gpu->junction,
+        gpu->junction.hotspot,
         JUNCTION_TEMP_WARN,
         JUNCTION_TEMP_DANGER
     );
 
     buffer_append(ctx, "%s", SEPARATOR);
-    append_temp_cell(ctx, gpu->vram, VRAM_TEMP_WARN, VRAM_TEMP_DANGER);
+    append_temp_cell(
+        ctx,
+        gpu->vram.hottest,
+        VRAM_TEMP_WARN,
+        VRAM_TEMP_DANGER
+    );
 
     buffer_append(ctx, "%s\n", SEPARATOR);
 }
@@ -399,9 +420,9 @@ static void monitor_temperatures_json(Context *ctx)
         buffer_append(ctx, "{\"index\":%u,", gpu->index);
         append_json_temp(ctx, "core", gpu->core);
         buffer_append(ctx, ",");
-        append_json_temp(ctx, "junction", gpu->junction);
+        append_json_temp(ctx, "junction", gpu->junction.hotspot);
         buffer_append(ctx, ",");
-        append_json_temp(ctx, "vram", gpu->vram);
+        append_json_temp(ctx, "vram", gpu->vram.hottest);
         buffer_append(ctx, "}");
     }
 
@@ -506,7 +527,8 @@ static void print_usage(const char *program)
         "  --refresh-ms <ms>  Polling interval in ms, minimum 50, default 1000\n"
         "  --help             Show this help and exit\n\n"
         "Environment:\n"
-        "  NVIDIA_VISIBLE_DEVICES limits monitored GPUs when --device is not set\n\n"
+        "  CUDA_VISIBLE_DEVICES selects GPUs when --device is not set\n"
+        "  NVIDIA_VISIBLE_DEVICES is used when CUDA_VISIBLE_DEVICES is unset\n\n"
         "Examples:\n"
         "  %s                   Display GPU temperature table\n"
         "  %s --device 0        Monitor only GPU 0\n"
@@ -518,6 +540,25 @@ static void print_usage(const char *program)
         program,
         program
     );
+}
+
+static void apply_visible_devices_environment(Context *ctx)
+{
+    const char *selectors;
+
+    if (ctx->selection_mode != SELECT_NONE)
+        return;
+
+    selectors = getenv(CUDA_VISIBLE_DEVICES_ENV);
+
+    if (!selectors)
+        selectors = getenv(NVIDIA_VISIBLE_DEVICES_ENV);
+
+    if (!selectors)
+        return;
+
+    ctx->visible_devices = *selectors ? selectors : "none";
+    ctx->selection_mode = SELECT_VISIBLE;
 }
 
 static int parse_arguments(int argc, char *argv[], Context *ctx)
@@ -555,14 +596,7 @@ static int parse_arguments(int argc, char *argv[], Context *ctx)
         }
     }
 
-    ctx->visible_devices = getenv(VISIBLE_DEVICES_ENV);
-
-    if (ctx->selection_mode == SELECT_NONE &&
-        ctx->visible_devices &&
-        *ctx->visible_devices) {
-        ctx->selection_mode = SELECT_VISIBLE;
-    }
-
+    apply_visible_devices_environment(ctx);
     return 0;
 }
 

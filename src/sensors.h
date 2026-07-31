@@ -3,17 +3,42 @@
 
 #include <stdbool.h>
 
+#define GPU_MAX_JUNCTION_CHANNELS 4u
+#define GPU_MAX_VRAM_SOURCES 64u
+
 typedef struct {
-    int value;
+    int millidegrees;
     bool valid;
 } Temperature;
+
+typedef struct {
+    Temperature hotspot;
+    Temperature hardware_max;
+    Temperature hardware_average;
+    Temperature channels[GPU_MAX_JUNCTION_CHANNELS];
+    unsigned int channel_count;
+} JunctionReading;
+
+typedef enum {
+    GPU_VRAM_SOURCE_LAYOUT_NONE,
+    GPU_VRAM_SOURCE_LAYOUT_STANDARD,
+    GPU_VRAM_SOURCE_LAYOUT_CLAMSHELL,
+    GPU_VRAM_SOURCE_LAYOUT_UNGROUPED
+} GpuVramSourceLayout;
+
+typedef struct {
+    Temperature hottest;
+    Temperature sources[GPU_MAX_VRAM_SOURCES];
+    unsigned int source_slot_count;
+    GpuVramSourceLayout source_layout;
+} VramReading;
 
 typedef struct {
     unsigned int index;
     const char *short_name;
     Temperature core;
-    Temperature junction;
-    Temperature vram;
+    JunctionReading junction;
+    VramReading vram;
 } GpuReading;
 
 typedef enum {

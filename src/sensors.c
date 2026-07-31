@@ -35,7 +35,9 @@
 #define PCI_BAR_IO_SPACE 0x1u
 
 #define PCI_DEVICE_ID_RTX_5090 0x2B85u
+#define PCI_DEVICE_ID_RTX_5080 0x2B82u
 #define PCI_DEVICE_ID_RTX_5070_TI 0x2C05u
+#define PCI_DEVICE_ID_RTX_5070 0x2C02u
 
 #define JUNCTION_THERM_BYTE_OFFSET 0x0002046Cu
 #define VRAM_GDDR6_ADC_OFFSET 0x0000E2A8u
@@ -44,24 +46,36 @@
 #define JUNCTION_BYTE_MASK 0xFFu
 #define VRAM_ADC_MASK 0xFFFu
 #define VRAM_ADC_DIVISOR 32u
-#define TEMP_VALID_LIMIT 0x7Fu
+#define GDDR6_TEMP_VALID_LIMIT 0x7Fu
 
-#define BLACKWELL_BJT_BASE 0x00AD0A90u
-#define BLACKWELL_BJT_COUNT 6u
-#define BLACKWELL_BJT_STRIDE 0x4u
-#define BLACKWELL_BJT_VALID_BIT 0x40000000u
-#define BLACKWELL_BJT_VALUE_MASK 0xFFFFu
-#define BLACKWELL_BJT_SPAN \
-    ((BLACKWELL_BJT_COUNT - 1u) * BLACKWELL_BJT_STRIDE + \
-     sizeof(uint32_t))
+#define BLACKWELL_THERM_BASE 0x00AD0A90u
+#define BLACKWELL_THERM_CHANNEL_COUNT 4u
+#define BLACKWELL_THERM_STRIDE 0x4u
+#define BLACKWELL_THERM_HW_MAX_OFFSET 0x10u
+#define BLACKWELL_THERM_HW_AVG_OFFSET 0x14u
+#define BLACKWELL_THERM_SPAN \
+    (BLACKWELL_THERM_HW_AVG_OFFSET + sizeof(uint32_t))
+#define BLACKWELL_THERM_VALUE_MASK 0xFFFFu
+#define BLACKWELL_THERM_SCALE 256u
+#define BLACKWELL_THERM_MAX_C 150u
 
 #define GDDR7_DQR_BASE 0x009024C0u
 #define GDDR7_DQR_VALID_OFFSET 0x10u
 #define GDDR7_DQR_STRIDE 0x4000u
-#define GDDR7_DQR_MAX_SLOTS 16u
+#define GDDR7_DQR_SUBREGISTER_COUNT 4u
+#define GDDR7_DQR_VALID_SHIFT 24u
+#define GDDR7_MAX_FBPA_COUNT 16u
+#define GDDR7_STANDARD_FBPA_COUNT 16u
+#define GDDR7_CLAMSHELL_FBPA_COUNT 8u
 #define GDDR7_DQR_SPAN \
-    ((GDDR7_DQR_MAX_SLOTS - 1u) * GDDR7_DQR_STRIDE + \
+    ((GDDR7_MAX_FBPA_COUNT - 1u) * GDDR7_DQR_STRIDE + \
      GDDR7_DQR_VALID_OFFSET + sizeof(uint32_t))
+#define GDDR7_STRAP_BROADCAST 0x009A0200u
+#define GDDR7_STRAP_X16_BIT 22u
+#define GDDR7_CODE_MIN 21u
+#define GDDR7_CODE_MAX 80u
+#define GDDR7_POISON_MASK 0xFFFF0000u
+#define GDDR7_POISON_VALUE 0xBADF0000u
 
 #ifndef NVML_DEVICE_NAME_BUFFER_SIZE
 #define NVML_DEVICE_NAME_BUFFER_SIZE 64
@@ -72,8 +86,13 @@
 #endif
 
 _Static_assert(
-    BLACKWELL_BJT_SPAN == 0x18u,
-    "unexpected Blackwell BJT span"
+    BLACKWELL_THERM_CHANNEL_COUNT <= GPU_MAX_JUNCTION_CHANNELS,
+    "junction channel capacity is too small"
+);
+
+_Static_assert(
+    BLACKWELL_THERM_SPAN == 0x18u,
+    "unexpected Blackwell thermal span"
 );
 
 _Static_assert(
@@ -81,16 +100,38 @@ _Static_assert(
     "unexpected GDDR7 DQR span"
 );
 
+_Static_assert(
+    GDDR7_STANDARD_FBPA_COUNT * 2u <= GPU_MAX_VRAM_SOURCES,
+    "standard GDDR7 source capacity is too small"
+);
+
+_Static_assert(
+    GDDR7_CLAMSHELL_FBPA_COUNT *
+        GDDR7_DQR_SUBREGISTER_COUNT <= GPU_MAX_VRAM_SOURCES,
+    "clamshell GDDR7 source capacity is too small"
+);
+
+_Static_assert(
+    GDDR7_MAX_FBPA_COUNT *
+        GDDR7_DQR_SUBREGISTER_COUNT <= GPU_MAX_VRAM_SOURCES,
+    "ungrouped GDDR7 source capacity is too small"
+);
+
 typedef enum {
     JUNCTION_THERM_BYTE,
-    JUNCTION_BLACKWELL_BJT
+    JUNCTION_BLACKWELL_THERMAL
 } JunctionMethod;
 
 typedef enum {
-    VRAM_NONE,
     VRAM_GDDR6_ADC,
     VRAM_GDDR7_DQR
 } VramMethod;
+
+typedef enum {
+    GDDR7_TOPOLOGY_UNKNOWN,
+    GDDR7_TOPOLOGY_STANDARD,
+    GDDR7_TOPOLOGY_CLAMSHELL
+} Gddr7Topology;
 
 typedef struct {
     void *mapping;
@@ -99,21 +140,30 @@ typedef struct {
 } MmioRegion;
 
 typedef struct {
-    uint16_t device_id;
     JunctionMethod junction_method;
     VramMethod vram_method;
+} SensorProfile;
+
+typedef struct {
+    uint16_t device_id;
+    const SensorProfile *profile;
 } DeviceProfile;
+
+typedef struct {
+    const SensorProfile *profile;
+    MmioRegion junction_mmio;
+    MmioRegion vram_mmio;
+    Gddr7Topology gddr7_topology;
+} GpuSensorLayout;
 
 typedef struct {
     nvmlDevice_t nvml;
     nvmlPciInfo_t pci_info;
     char short_name[NVML_DEVICE_NAME_BUFFER_SIZE];
     char uuid[NVML_DEVICE_UUID_BUFFER_SIZE];
+    GpuSensorLayout sensors;
     GpuReading reading;
-    MmioRegion junction_mmio;
-    MmioRegion vram_mmio;
-    JunctionMethod junction_method;
-    VramMethod vram_method;
+    unsigned int index;
     bool present;
     bool selected;
     bool has_pci;
@@ -126,16 +176,32 @@ struct Monitor {
     bool nvml_initialized;
 };
 
+static const SensorProfile gddr6_profile = {
+    .junction_method = JUNCTION_THERM_BYTE,
+    .vram_method = VRAM_GDDR6_ADC
+};
+
+static const SensorProfile gddr7_profile = {
+    .junction_method = JUNCTION_BLACKWELL_THERMAL,
+    .vram_method = VRAM_GDDR7_DQR
+};
+
 static const DeviceProfile device_profiles[] = {
     {
         .device_id = PCI_DEVICE_ID_RTX_5090,
-        .junction_method = JUNCTION_BLACKWELL_BJT,
-        .vram_method = VRAM_GDDR7_DQR
+        .profile = &gddr7_profile
+    },
+    {
+        .device_id = PCI_DEVICE_ID_RTX_5080,
+        .profile = &gddr7_profile
     },
     {
         .device_id = PCI_DEVICE_ID_RTX_5070_TI,
-        .junction_method = JUNCTION_BLACKWELL_BJT,
-        .vram_method = VRAM_NONE
+        .profile = &gddr7_profile
+    },
+    {
+        .device_id = PCI_DEVICE_ID_RTX_5070,
+        .profile = &gddr7_profile
     }
 };
 
@@ -194,16 +260,16 @@ static void make_short_name(const char *name, char *output, size_t size)
     replace_suffix(output, size, " SUPER", " S");
 }
 
-static const DeviceProfile *find_device_profile(uint16_t device_id)
+static const SensorProfile *select_sensor_profile(uint16_t device_id)
 {
     size_t count = sizeof(device_profiles) / sizeof(device_profiles[0]);
 
     for (size_t i = 0; i < count; i++) {
         if (device_profiles[i].device_id == device_id)
-            return &device_profiles[i];
+            return device_profiles[i].profile;
     }
 
-    return NULL;
+    return &gddr6_profile;
 }
 
 static void unmap_mmio(MmioRegion *region)
@@ -320,199 +386,406 @@ static Temperature invalid_temperature(void)
     return (Temperature){0};
 }
 
-static Temperature sample_therm_byte(const MmioRegion *region)
+static Temperature valid_temperature(int millidegrees)
 {
-    uint32_t raw;
+    return (Temperature){
+        .millidegrees = millidegrees,
+        .valid = true
+    };
+}
+
+static Temperature hottest_temperature(
+    Temperature first,
+    Temperature second
+)
+{
+    if (!first.valid)
+        return second;
+
+    if (!second.valid)
+        return first;
+
+    return first.millidegrees >= second.millidegrees
+        ? first
+        : second;
+}
+
+static bool is_gddr7_poison(uint32_t raw)
+{
+    return (raw & GDDR7_POISON_MASK) == GDDR7_POISON_VALUE;
+}
+
+static Temperature decode_therm_byte(uint32_t raw)
+{
     uint32_t value;
-
-    if (!region->regs)
-        return invalid_temperature();
-
-    raw = read_mmio32(region, 0);
 
     if (raw == UINT32_MAX)
         return invalid_temperature();
 
-    value =
-        (raw >> JUNCTION_BYTE_SHIFT) &
-        JUNCTION_BYTE_MASK;
+    value = (raw >> JUNCTION_BYTE_SHIFT) & JUNCTION_BYTE_MASK;
 
-    if (value >= TEMP_VALID_LIMIT)
+    if (value >= GDDR6_TEMP_VALID_LIMIT)
         return invalid_temperature();
 
-    return (Temperature){
-        .value = (int)value,
-        .valid = true
-    };
+    return valid_temperature((int)value * 1000);
 }
 
-static Temperature sample_blackwell_bjt(const MmioRegion *region)
+static Temperature decode_gddr6_adc(uint32_t raw)
 {
-    uint32_t hottest = 0;
-    bool found = false;
-
-    if (!region->regs)
-        return invalid_temperature();
-
-    for (unsigned int channel = 0;
-         channel < BLACKWELL_BJT_COUNT;
-         channel++) {
-        uint32_t raw = read_mmio32(
-            region,
-            (size_t)channel * BLACKWELL_BJT_STRIDE
-        );
-        uint32_t value;
-
-        if (raw == UINT32_MAX || !(raw & BLACKWELL_BJT_VALID_BIT))
-            continue;
-
-        value = raw & BLACKWELL_BJT_VALUE_MASK;
-
-        if (!found || value > hottest) {
-            hottest = value;
-            found = true;
-        }
-    }
-
-    if (!found)
-        return invalid_temperature();
-
-    return (Temperature){
-        .value = (int)(hottest >> 8),
-        .valid = true
-    };
-}
-
-static Temperature sample_gddr6_adc(const MmioRegion *region)
-{
-    uint32_t raw;
     uint32_t value;
-
-    if (!region->regs)
-        return invalid_temperature();
-
-    raw = read_mmio32(region, 0);
 
     if (raw == UINT32_MAX)
         return invalid_temperature();
 
     value = (raw & VRAM_ADC_MASK) / VRAM_ADC_DIVISOR;
 
-    if (value >= TEMP_VALID_LIMIT)
+    if (value >= GDDR6_TEMP_VALID_LIMIT)
         return invalid_temperature();
 
-    return (Temperature){
-        .value = (int)value,
-        .valid = true
-    };
+    return valid_temperature((int)value * 1000);
 }
 
-static Temperature decode_gddr7(uint32_t validity, uint32_t data)
+static Temperature decode_blackwell_temperature(uint32_t raw)
+{
+    uint32_t fixed;
+    int millidegrees;
+
+    if (raw == UINT32_MAX)
+        return invalid_temperature();
+
+    fixed = raw & BLACKWELL_THERM_VALUE_MASK;
+
+    if (fixed == 0 ||
+        fixed > BLACKWELL_THERM_MAX_C * BLACKWELL_THERM_SCALE) {
+        return invalid_temperature();
+    }
+
+    millidegrees = (int)(
+        (fixed * 1000u + BLACKWELL_THERM_SCALE / 2u) /
+        BLACKWELL_THERM_SCALE
+    );
+
+    return valid_temperature(millidegrees);
+}
+
+static Temperature decode_gddr7_data(uint32_t raw)
 {
     unsigned int code;
 
-    if (validity == UINT32_MAX || data == UINT32_MAX)
+    if (raw == UINT32_MAX || is_gddr7_poison(raw))
         return invalid_temperature();
 
-    if (((validity >> 24) & 0x0Fu) != 0x0Fu)
+    code = (raw >> 16) & 0xFFu;
+
+    if (code < GDDR7_CODE_MIN || code > GDDR7_CODE_MAX)
         return invalid_temperature();
 
-    if ((data & 0xFFFF0000u) == 0xBADF0000u)
-        return invalid_temperature();
-
-    code = (data >> 16) & 0xFFu;
-
-    if (code > 80u)
-        return invalid_temperature();
-
-    return (Temperature){
-        .value = (int)code * 2 - 40,
-        .valid = true
-    };
+    return valid_temperature(((int)code - 20) * 2000);
 }
 
-static Temperature sample_gddr7(const MmioRegion *region)
-{
-    Temperature hottest = {0};
-
-    if (!region->regs)
-        return hottest;
-
-    for (unsigned int slot = 0;
-         slot < GDDR7_DQR_MAX_SLOTS;
-         slot++) {
-        size_t offset = (size_t)slot * GDDR7_DQR_STRIDE;
-        uint32_t validity = read_mmio32(
-            region,
-            offset + GDDR7_DQR_VALID_OFFSET
-        );
-        uint32_t data = read_mmio32(region, offset);
-        Temperature current = decode_gddr7(validity, data);
-
-        if (!current.valid)
-            continue;
-
-        if (!hottest.valid || current.value > hottest.value)
-            hottest = current;
-    }
-
-    return hottest;
-}
-
-static void sample_core(GpuDevice *gpu)
+static Temperature sample_core(const GpuDevice *gpu)
 {
     unsigned int value;
     nvmlReturn_t result;
 
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     result = nvmlDeviceGetTemperature(
         gpu->nvml,
         NVML_TEMPERATURE_GPU,
         &value
     );
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
 
-    gpu->reading.core.valid = result == NVML_SUCCESS;
-    gpu->reading.core.value =
-        gpu->reading.core.valid ? (int)value : 0;
+    if (result != NVML_SUCCESS ||
+        value > (unsigned int)(INT_MAX / 1000)) {
+        return invalid_temperature();
+    }
+
+    return valid_temperature((int)value * 1000);
+}
+
+static void sample_gddr6_junction(
+    const GpuDevice *gpu,
+    JunctionReading *junction
+)
+{
+    if (!gpu->sensors.junction_mmio.regs)
+        return;
+
+    junction->hotspot = decode_therm_byte(
+        read_mmio32(&gpu->sensors.junction_mmio, 0)
+    );
+}
+
+static void sample_blackwell_junction(
+    const GpuDevice *gpu,
+    JunctionReading *junction
+)
+{
+    junction->channel_count = BLACKWELL_THERM_CHANNEL_COUNT;
+
+    if (!gpu->sensors.junction_mmio.regs)
+        return;
+
+    for (unsigned int channel = 0;
+         channel < BLACKWELL_THERM_CHANNEL_COUNT;
+         channel++) {
+        Temperature temperature = decode_blackwell_temperature(
+            read_mmio32(
+                &gpu->sensors.junction_mmio,
+                (size_t)channel * BLACKWELL_THERM_STRIDE
+            )
+        );
+
+        junction->channels[channel] = temperature;
+        junction->hotspot = hottest_temperature(
+            junction->hotspot,
+            temperature
+        );
+    }
+
+    junction->hardware_max = decode_blackwell_temperature(
+        read_mmio32(
+            &gpu->sensors.junction_mmio,
+            BLACKWELL_THERM_HW_MAX_OFFSET
+        )
+    );
+    junction->hardware_average = decode_blackwell_temperature(
+        read_mmio32(
+            &gpu->sensors.junction_mmio,
+            BLACKWELL_THERM_HW_AVG_OFFSET
+        )
+    );
+    junction->hotspot = hottest_temperature(
+        junction->hotspot,
+        junction->hardware_max
+    );
+}
+
+static void sample_gddr6_vram(
+    const GpuDevice *gpu,
+    VramReading *vram
+)
+{
+    if (!gpu->sensors.vram_mmio.regs)
+        return;
+
+    vram->hottest = decode_gddr6_adc(
+        read_mmio32(&gpu->sensors.vram_mmio, 0)
+    );
+}
+
+static bool valid_gddr7_validity(uint32_t raw)
+{
+    return raw != UINT32_MAX && !is_gddr7_poison(raw);
+}
+
+static Temperature sample_gddr7_component(
+    const MmioRegion *region,
+    size_t base,
+    uint32_t validity,
+    unsigned int subregister
+)
+{
+    uint32_t mask;
+
+    if (subregister >= GDDR7_DQR_SUBREGISTER_COUNT)
+        return invalid_temperature();
+
+    mask = 1u << (GDDR7_DQR_VALID_SHIFT + subregister);
+
+    if (!(validity & mask))
+        return invalid_temperature();
+
+    return decode_gddr7_data(
+        read_mmio32(
+            region,
+            base + (size_t)subregister * sizeof(uint32_t)
+        )
+    );
+}
+
+static void include_vram_source(
+    VramReading *vram,
+    unsigned int source,
+    Temperature temperature
+)
+{
+    if (source >= GPU_MAX_VRAM_SOURCES)
+        return;
+
+    vram->sources[source] = temperature;
+    vram->hottest = hottest_temperature(
+        vram->hottest,
+        temperature
+    );
+}
+
+static void sample_gddr7_standard(
+    const GpuDevice *gpu,
+    VramReading *vram
+)
+{
+    const MmioRegion *region = &gpu->sensors.vram_mmio;
+
+    vram->source_layout = GPU_VRAM_SOURCE_LAYOUT_STANDARD;
+    vram->source_slot_count = GDDR7_STANDARD_FBPA_COUNT * 2u;
+
+    if (!region->regs)
+        return;
+
+    for (unsigned int fbpa = 0;
+         fbpa < GDDR7_STANDARD_FBPA_COUNT;
+         fbpa++) {
+        size_t base = (size_t)fbpa * GDDR7_DQR_STRIDE;
+        uint32_t validity = read_mmio32(
+            region,
+            base + GDDR7_DQR_VALID_OFFSET
+        );
+
+        if (!valid_gddr7_validity(validity))
+            continue;
+
+        for (unsigned int subpartition = 0;
+             subpartition < 2u;
+             subpartition++) {
+            Temperature first = sample_gddr7_component(
+                region,
+                base,
+                validity,
+                subpartition
+            );
+            Temperature second = sample_gddr7_component(
+                region,
+                base,
+                validity,
+                subpartition + 2u
+            );
+
+            include_vram_source(
+                vram,
+                fbpa * 2u + subpartition,
+                hottest_temperature(first, second)
+            );
+        }
+    }
+}
+
+static void sample_gddr7_independent(
+    const GpuDevice *gpu,
+    VramReading *vram,
+    unsigned int fbpa_count,
+    GpuVramSourceLayout source_layout
+)
+{
+    const MmioRegion *region = &gpu->sensors.vram_mmio;
+
+    vram->source_layout = source_layout;
+    vram->source_slot_count =
+        fbpa_count * GDDR7_DQR_SUBREGISTER_COUNT;
+
+    if (!region->regs)
+        return;
+
+    for (unsigned int fbpa = 0; fbpa < fbpa_count; fbpa++) {
+        size_t base = (size_t)fbpa * GDDR7_DQR_STRIDE;
+        uint32_t validity = read_mmio32(
+            region,
+            base + GDDR7_DQR_VALID_OFFSET
+        );
+
+        if (!valid_gddr7_validity(validity))
+            continue;
+
+        for (unsigned int subregister = 0;
+             subregister < GDDR7_DQR_SUBREGISTER_COUNT;
+             subregister++) {
+            include_vram_source(
+                vram,
+                fbpa * GDDR7_DQR_SUBREGISTER_COUNT + subregister,
+                sample_gddr7_component(
+                    region,
+                    base,
+                    validity,
+                    subregister
+                )
+            );
+        }
+    }
+}
+
+static void sample_gddr7_vram(
+    const GpuDevice *gpu,
+    VramReading *vram
+)
+{
+    switch (gpu->sensors.gddr7_topology) {
+    case GDDR7_TOPOLOGY_STANDARD:
+        sample_gddr7_standard(gpu, vram);
+        break;
+
+    case GDDR7_TOPOLOGY_CLAMSHELL:
+        sample_gddr7_independent(
+            gpu,
+            vram,
+            GDDR7_CLAMSHELL_FBPA_COUNT,
+            GPU_VRAM_SOURCE_LAYOUT_CLAMSHELL
+        );
+        break;
+
+    case GDDR7_TOPOLOGY_UNKNOWN:
+    default:
+        sample_gddr7_independent(
+            gpu,
+            vram,
+            GDDR7_MAX_FBPA_COUNT,
+            GPU_VRAM_SOURCE_LAYOUT_UNGROUPED
+        );
+        break;
+    }
 }
 
 static void sample_gpu(GpuDevice *gpu)
 {
-    sample_core(gpu);
+    GpuReading reading = {
+        .index = gpu->index,
+        .short_name = gpu->short_name
+    };
 
-    switch (gpu->junction_method) {
+    reading.core = sample_core(gpu);
+
+    switch (gpu->sensors.profile->junction_method) {
     case JUNCTION_THERM_BYTE:
-        gpu->reading.junction =
-            sample_therm_byte(&gpu->junction_mmio);
+        sample_gddr6_junction(gpu, &reading.junction);
         break;
 
-    case JUNCTION_BLACKWELL_BJT:
-        gpu->reading.junction =
-            sample_blackwell_bjt(&gpu->junction_mmio);
+    case JUNCTION_BLACKWELL_THERMAL:
+        sample_blackwell_junction(gpu, &reading.junction);
         break;
 
     default:
-        gpu->reading.junction = invalid_temperature();
         break;
     }
 
-    switch (gpu->vram_method) {
+    switch (gpu->sensors.profile->vram_method) {
     case VRAM_GDDR6_ADC:
-        gpu->reading.vram =
-            sample_gddr6_adc(&gpu->vram_mmio);
+        sample_gddr6_vram(gpu, &reading.vram);
         break;
 
     case VRAM_GDDR7_DQR:
-        gpu->reading.vram = sample_gddr7(&gpu->vram_mmio);
+        sample_gddr7_vram(gpu, &reading.vram);
         break;
 
-    case VRAM_NONE:
     default:
-        gpu->reading.vram = invalid_temperature();
         break;
     }
+
+    gpu->reading = reading;
 }
 
 static bool parse_unsigned(const char *text, unsigned int *output)
@@ -806,7 +1079,7 @@ static struct pci_dev *match_pci_device(
 }
 
 static void setup_junction_mmio(
-    GpuDevice *gpu,
+    GpuSensorLayout *sensors,
     struct pci_dev *device,
     int memory_fd,
     long page_size
@@ -815,15 +1088,15 @@ static void setup_junction_mmio(
     uint32_t offset;
     size_t span;
 
-    switch (gpu->junction_method) {
+    switch (sensors->profile->junction_method) {
     case JUNCTION_THERM_BYTE:
         offset = JUNCTION_THERM_BYTE_OFFSET;
         span = sizeof(uint32_t);
         break;
 
-    case JUNCTION_BLACKWELL_BJT:
-        offset = BLACKWELL_BJT_BASE;
-        span = BLACKWELL_BJT_SPAN;
+    case JUNCTION_BLACKWELL_THERMAL:
+        offset = BLACKWELL_THERM_BASE;
+        span = BLACKWELL_THERM_SPAN;
         break;
 
     default:
@@ -836,12 +1109,12 @@ static void setup_junction_mmio(
         offset,
         span,
         page_size,
-        &gpu->junction_mmio
+        &sensors->junction_mmio
     );
 }
 
 static void setup_vram_mmio(
-    GpuDevice *gpu,
+    GpuSensorLayout *sensors,
     struct pci_dev *device,
     int memory_fd,
     long page_size
@@ -850,7 +1123,7 @@ static void setup_vram_mmio(
     uint32_t offset;
     size_t span;
 
-    switch (gpu->vram_method) {
+    switch (sensors->profile->vram_method) {
     case VRAM_GDDR6_ADC:
         offset = VRAM_GDDR6_ADC_OFFSET;
         span = sizeof(uint32_t);
@@ -861,7 +1134,6 @@ static void setup_vram_mmio(
         span = GDDR7_DQR_SPAN;
         break;
 
-    case VRAM_NONE:
     default:
         return;
     }
@@ -872,8 +1144,39 @@ static void setup_vram_mmio(
         offset,
         span,
         page_size,
-        &gpu->vram_mmio
+        &sensors->vram_mmio
     );
+}
+
+static Gddr7Topology detect_gddr7_topology(
+    struct pci_dev *device,
+    int memory_fd,
+    long page_size
+)
+{
+    MmioRegion strap_region;
+    uint32_t raw;
+
+    if (!map_mmio(
+            memory_fd,
+            device,
+            GDDR7_STRAP_BROADCAST,
+            sizeof(uint32_t),
+            page_size,
+            &strap_region
+        )) {
+        return GDDR7_TOPOLOGY_UNKNOWN;
+    }
+
+    raw = read_mmio32(&strap_region, 0);
+    unmap_mmio(&strap_region);
+
+    if (raw == 0 || raw == UINT32_MAX || is_gddr7_poison(raw))
+        return GDDR7_TOPOLOGY_UNKNOWN;
+
+    return raw & (1u << GDDR7_STRAP_X16_BIT)
+        ? GDDR7_TOPOLOGY_CLAMSHELL
+        : GDDR7_TOPOLOGY_STANDARD;
 }
 
 static void setup_gpu_mmio(
@@ -884,10 +1187,6 @@ static void setup_gpu_mmio(
 )
 {
     struct pci_dev *device;
-    const DeviceProfile *profile;
-
-    gpu->junction_method = JUNCTION_THERM_BYTE;
-    gpu->vram_method = VRAM_GDDR6_ADC;
 
     if (!gpu->has_pci)
         return;
@@ -897,25 +1196,28 @@ static void setup_gpu_mmio(
     if (!device)
         return;
 
-    profile = find_device_profile(device->device_id);
-
-    if (profile) {
-        gpu->junction_method = profile->junction_method;
-        gpu->vram_method = profile->vram_method;
-    }
+    gpu->sensors.profile = select_sensor_profile(device->device_id);
 
     setup_junction_mmio(
-        gpu,
+        &gpu->sensors,
         device,
         memory_fd,
         page_size
     );
     setup_vram_mmio(
-        gpu,
+        &gpu->sensors,
         device,
         memory_fd,
         page_size
     );
+
+    if (gpu->sensors.profile->vram_method == VRAM_GDDR7_DQR) {
+        gpu->sensors.gddr7_topology = detect_gddr7_topology(
+            device,
+            memory_fd,
+            page_size
+        );
+    }
 }
 
 static void log_sensor_warnings(
@@ -923,7 +1225,7 @@ static void log_sensor_warnings(
     const GpuDevice *gpu
 )
 {
-    if (!gpu->junction_mmio.regs) {
+    if (!gpu->sensors.junction_mmio.regs) {
         fprintf(
             stderr,
             "gputemps: GPU %u: junction sensor unavailable\n",
@@ -931,8 +1233,7 @@ static void log_sensor_warnings(
         );
     }
 
-    if (gpu->vram_method != VRAM_NONE &&
-        !gpu->vram_mmio.regs) {
+    if (!gpu->sensors.vram_mmio.regs) {
         fprintf(
             stderr,
             "gputemps: GPU %u: VRAM sensor unavailable\n",
@@ -1025,8 +1326,10 @@ int monitor_init(Monitor **output, const MonitorOptions *options)
         GpuDevice *gpu = &monitor->devices[i];
         char name[NVML_DEVICE_NAME_BUFFER_SIZE];
 
+        gpu->index = i;
         gpu->reading.index = i;
         gpu->reading.short_name = gpu->short_name;
+        gpu->sensors.profile = &gddr6_profile;
 
         if (nvmlDeviceGetHandleByIndex(
                 i,
@@ -1153,8 +1456,12 @@ void monitor_destroy(Monitor *monitor)
 
     if (monitor->devices) {
         for (unsigned int i = 0; i < monitor->device_count; i++) {
-            unmap_mmio(&monitor->devices[i].junction_mmio);
-            unmap_mmio(&monitor->devices[i].vram_mmio);
+            unmap_mmio(
+                &monitor->devices[i].sensors.junction_mmio
+            );
+            unmap_mmio(
+                &monitor->devices[i].sensors.vram_mmio
+            );
         }
 
         free(monitor->devices);
