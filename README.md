@@ -230,7 +230,9 @@ make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 
 ## Credits
 
-- [jjziets/gddr6_temps](https://github.com/jjziets/gddr6_temps) for the original GDDR6 temperature work
-- [olealgoritme/gddr6](https://github.com/olealgoritme/gddr6) for the GDDR6, GDDR6X, and RTX 5090 temperature work
-- [sunnyyangyangyang/gddr7-temp](https://github.com/sunnyyangyangyang/gddr7-temp) for RTX 5090 GDDR7 and Blackwell temperature work
-- [igor'sLAB](https://www.igorslab.de/en/blackwell-hotspot-ibhe-estimation-register-findings-download-nvidia-question/) for the Blackwell temperature register research
+- [olealgoritme/gddr6](https://github.com/olealgoritme/gddr6): GDDR6/GDDR6X VRAM temperature support
+- [jjziets/gddr6_temps](https://github.com/jjziets/gddr6_temps): GDDR6/GDDR6X junction temperature support
+- [igor'sLAB](https://www.igorslab.de/en/blackwell-hotspot-ibhe-estimation-register-findings-download-nvidia-question/): RTX 5090 junction register findings
+- [TechPowerUp forum](https://www.techpowerup.com/forums/threads/rtx-5070-discussion.338562/post-5557509): RTX 5070 GDDR7 register findings
+- [sunnyyangyangyang/gddr7-temp](https://github.com/sunnyyangyangyang/gddr7-temp): RTX 5090 GDDR7 VRAM and junction support
+- [biGGer](https://gist.github.com/biGGer/d8e8a8bacea338d232a65b530b1e2353): RTX 5070, 5070 Ti, 5080, and 5090 VRAM and junction support
