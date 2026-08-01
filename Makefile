@@ -24,7 +24,7 @@ BASE_CFLAGS := -std=c11 -Wall -Wextra -Wpedantic
 
 LDLIBS += -lnvidia-ml -lpci
 
-SOURCES := src/main.c src/sensors.c
+SOURCES := src/main.c src/monitor.c src/sensor.c src/mmio.c
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDS := $(OBJECTS:.o=.d)
 
@@ -36,14 +36,18 @@ $(PROGRAM): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
 
 src/%.o: src/%.c
-	$(CC) $(CPPFLAGS) $(NVML_CPPFLAGS) $(CFLAGS) $(BASE_CFLAGS) -MMD -MP -c -o $@ $<
+	$(CC) $(CPPFLAGS) $(NVML_CPPFLAGS) $(CFLAGS) $(BASE_CFLAGS) \
+		-MMD -MP -c -o $@ $<
 
-src/sensors.o: | check-nvml
+src/monitor.o src/sensor.o: | check-nvml
 
 check-nvml:
 	@printf '%s\n' '#include <nvml.h>' | \
 		$(CC) $(CPPFLAGS) $(NVML_CPPFLAGS) -x c -E - >/dev/null 2>&1 || { \
-		printf '%s\n' 'error: nvml.h not found; install the NVML development files, set CUDA_HOME or NVML_HEADER, or pass CPPFLAGS="-I/path/to/include"'; \
+		printf '%s%s%s\n' \
+			'error: nvml.h not found; install the NVML development files, ' \
+			'set CUDA_HOME or NVML_HEADER, or pass ' \
+			'CPPFLAGS="-I/path/to/include"'; \
 		exit 1; \
 	}
 

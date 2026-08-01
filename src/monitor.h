@@ -1,5 +1,5 @@
-#ifndef GPU_TEMP_SENSORS_H
-#define GPU_TEMP_SENSORS_H
+#ifndef GPUTEMPS_MONITOR_H
+#define GPUTEMPS_MONITOR_H
 
 #include <stdbool.h>
 
@@ -54,10 +54,11 @@ typedef struct {
 
 typedef struct Monitor Monitor;
 
-int monitor_init(Monitor **out, const MonitorOptions *options);
+int monitor_init(Monitor **output, const MonitorOptions *options);
 void monitor_sample(Monitor *monitor);
 unsigned int monitor_gpu_count(const Monitor *monitor);
-const GpuReading *monitor_gpu(const Monitor *monitor, unsigned int position);
+const GpuReading *monitor_gpu(const Monitor *monitor,
+    unsigned int position);
 void monitor_destroy(Monitor *monitor);
 
 #endif
