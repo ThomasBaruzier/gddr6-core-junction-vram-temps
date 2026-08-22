@@ -73,7 +73,10 @@ The minimum refresh interval is 50 milliseconds. The default is 1000 millisecond
 Each object contains a timestamp and the selected GPU readings:
 
 ```json
-{"timestamp":1678886400000,"gpus":[{"index":0,"core":55,"junction":68,"vram":72}]}
+{
+  "timestamp": 1678886400000,
+  "gpus": [{ "index": 0, "core": 55, "junction": 68, "vram": 72 }]
+}
 ```
 
 - `timestamp`: Unix timestamp in milliseconds.
@@ -129,7 +132,7 @@ sudo ./gputemps
 
 ## Blackwell support
 
-Experimental junction and GDDR7 VRAM temperature support is included for RTX 5090, RTX 5080, RTX 5070 Ti, and RTX 5070.
+Experimental junction and GDDR7 VRAM temperature support is included for RTX 5090, RTX 5080, RTX 5070 Ti, RTX 5070, and RTX 5060 Ti.
 
 On supported Blackwell GPUs:
 
@@ -138,7 +141,7 @@ On supported Blackwell GPUs:
 
 The same values are available through the JSON `junction` and `vram` properties.
 
-There is no support (yet) for RTX 5060s. Contributions are welcomed.
+There is no support (yet) for RTX 5060. Contributions are welcomed.
 
 ## Troubleshooting
 
@@ -197,6 +200,7 @@ make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 - RTX 3090
 - RTX 4060 Ti 16GB
 - RTX 4060 Max-Q
+- RTX 5060 Ti
 
 ### Should work
 

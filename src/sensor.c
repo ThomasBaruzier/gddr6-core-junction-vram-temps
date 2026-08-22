@@ -12,6 +12,7 @@
 #define PCI_DEVICE_ID_RTX_5080 0x2B82u
 #define PCI_DEVICE_ID_RTX_5070_TI 0x2C05u
 #define PCI_DEVICE_ID_RTX_5070 0x2C02u
+#define PCI_DEVICE_ID_RTX_5060_TI 0x2D04u
 
 #define GDDR6_JUNCTION_THERM_OFFSET 0x0002046Cu
 #define GDDR6_VRAM_ADC_OFFSET 0x0000E2A8u
@@ -114,7 +115,8 @@ static const DeviceProfile device_profiles[] = {
     { PCI_DEVICE_ID_RTX_5090, &gddr7_profile },
     { PCI_DEVICE_ID_RTX_5080, &gddr7_profile },
     { PCI_DEVICE_ID_RTX_5070_TI, &gddr7_profile },
-    { PCI_DEVICE_ID_RTX_5070, &gddr7_profile }
+    { PCI_DEVICE_ID_RTX_5070, &gddr7_profile },
+    { PCI_DEVICE_ID_RTX_5060_TI, &gddr7_profile },
 };
 
 static const SensorProfile *select_sensor_profile(uint16_t device_id)
