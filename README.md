@@ -201,6 +201,7 @@ make CPPFLAGS="-I$CUDA_HOME/targets/x86_64-linux/include"
 - RTX 4060 Ti 16GB
 - RTX 4060 Max-Q
 - RTX 5060 Ti
+- RTX 2000 Ada
 
 ### Should work
 
