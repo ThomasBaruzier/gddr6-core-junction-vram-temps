@@ -545,6 +545,37 @@ void sensor_setup(GpuSensorLayout *sensors,
     }
 }
 
+static Temperature sample_nvml_memory_temp(nvmlDevice_t nvml)
+{
+    nvmlFieldValue_t fv;
+
+    memset(&fv, 0, sizeof(fv));
+    fv.fieldId = NVML_FI_DEV_MEMORY_TEMP;
+
+    if (nvmlDeviceGetFieldValues(nvml, 1, &fv) != NVML_SUCCESS)
+        return invalid_temperature();
+
+    if (fv.nvmlReturn != NVML_SUCCESS)
+        return invalid_temperature();
+
+    /* Driver returns Celsius as UNSIGNED_INT on CMP/Ampere HBM parts;
+       accept any numeric type via the ll-width members that alias safely. */
+    long long celsius;
+    switch (fv.valueType) {
+    case NVML_VALUE_TYPE_UNSIGNED_INT:        celsius = fv.value.uiVal; break;
+    case NVML_VALUE_TYPE_UNSIGNED_LONG:       celsius = (long long)fv.value.ulVal; break;
+    case NVML_VALUE_TYPE_UNSIGNED_LONG_LONG:  celsius = (long long)fv.value.ullVal; break;
+    case NVML_VALUE_TYPE_SIGNED_LONG_LONG:    celsius = fv.value.sllVal; break;
+    default:
+        return invalid_temperature();
+    }
+
+    if (celsius < 0 || celsius > 200)
+        return invalid_temperature();
+
+    return valid_temperature((int)(celsius * MILLIDEGREES_PER_C));
+}
+
 void sensor_sample(const GpuSensorLayout *sensors, nvmlDevice_t nvml,
     GpuReading *reading)
 {
@@ -578,6 +609,12 @@ void sensor_sample(const GpuSensorLayout *sensors, nvmlDevice_t nvml,
     default:
         break;
     }
+
+    /* MMIO VRAM register is absent/zero on HBM parts (CMP GA100): a sub-5C
+       reading is physically impossible on these GPUs -> trust NVML instead. */
+    if (!reading->vram.hottest.valid ||
+        reading->vram.hottest.millidegrees < 5 * MILLIDEGREES_PER_C)
+        reading->vram.hottest = sample_nvml_memory_temp(nvml);
 }
 
 bool sensor_junction_mapped(const GpuSensorLayout *sensors)
