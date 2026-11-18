@@ -21,6 +21,8 @@
 #define NVIDIA_PCI_VENDOR_ID 0x10DEu
 #define PCI_DEVICE_ID_SHIFT 16u
 
+#define UUID_SHORT_LENGTH 12u
+
 #ifndef NVML_DEVICE_NAME_BUFFER_SIZE
 #define NVML_DEVICE_NAME_BUFFER_SIZE 64
 #endif
@@ -34,6 +36,7 @@ typedef struct {
     nvmlPciInfo_t pci_info;
     char short_name[NVML_DEVICE_NAME_BUFFER_SIZE];
     char uuid[NVML_DEVICE_UUID_BUFFER_SIZE];
+    char uuid_short[UUID_SHORT_LENGTH + 1u];
     GpuSensorLayout sensors;
     GpuReading reading;
     unsigned int index;
@@ -100,6 +103,37 @@ static void make_short_name(const char *name, char *output, size_t size)
 
     copy_string(output, size, start);
     replace_suffix(output, size, " SUPER", " S");
+}
+
+static void make_uuid_short(const char *uuid, char *output, size_t size)
+{
+    size_t length;
+    size_t suffix;
+
+    if (size < UUID_SHORT_LENGTH + 1u)
+        return;
+
+    if (!uuid || !(length = strlen(uuid))) {
+        output[0] = '\0';
+        return;
+    }
+
+    suffix = 0;
+
+    while (length > 0 && suffix < UUID_SHORT_LENGTH) {
+        if (isxdigit((unsigned char)uuid[length - 1]))
+            output[suffix++] = uuid[length - 1];
+
+        length--;
+    }
+
+    output[suffix] = '\0';
+
+    for (size_t i = 0; i < suffix / 2u; i++) {
+        char swap = output[i];
+        output[i] = output[suffix - 1u - i];
+        output[suffix - 1u - i] = swap;
+    }
 }
 
 static bool parse_gpu_index(const char *text, unsigned int *output)
@@ -313,6 +347,8 @@ static void discover_gpu(GpuDevice *gpu, unsigned int index)
     gpu->index = index;
     gpu->reading.index = index;
     gpu->reading.short_name = gpu->short_name;
+    gpu->reading.uuid = gpu->uuid;
+    gpu->reading.uuid_short = gpu->uuid_short;
     sensor_init(&gpu->sensors);
 
     result = nvmlDeviceGetHandleByIndex(index, &gpu->nvml);
@@ -332,6 +368,9 @@ static void discover_gpu(GpuDevice *gpu, unsigned int index)
 
     if (result != NVML_SUCCESS)
         gpu->uuid[0] = '\0';
+
+    make_uuid_short(gpu->uuid, gpu->uuid_short,
+        sizeof(gpu->uuid_short));
 
     result = nvmlDeviceGetPciInfo(gpu->nvml, &gpu->pci_info);
 
@@ -440,7 +479,9 @@ static void sample_gpu(GpuDevice *gpu)
 {
     GpuReading reading = {
         .index = gpu->index,
-        .short_name = gpu->short_name
+        .short_name = gpu->short_name,
+        .uuid = gpu->uuid,
+        .uuid_short = gpu->uuid_short
     };
 
     sensor_sample(&gpu->sensors, gpu->nvml, &reading);
