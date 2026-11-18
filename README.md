@@ -29,6 +29,8 @@ Run the live temperature table:
 sudo ./gputemps
 ```
 
+The table shows the full index and a 12-character UUID suffix per GPU, so identical cards can be told apart and cards keep a stable identity across reboots. Use the full UUID from the JSON output with `--device`.
+
 Display one reading and exit:
 
 ```sh
@@ -75,12 +77,13 @@ Each object contains a timestamp and the selected GPU readings:
 ```json
 {
   "timestamp": 1678886400000,
-  "gpus": [{ "index": 0, "core": 55, "junction": 68, "vram": 72 }]
+  "gpus": [{ "index": 0, "uuid": "GPU-12345678-...", "core": 55, "junction": 68, "vram": 72 }]
 }
 ```
 
 - `timestamp`: Unix timestamp in milliseconds.
 - `index`: NVML device index.
+- `uuid`: NVML device UUID, stable across reboots.
 - `core`: GPU core temperature in Celsius.
 - `junction`: GPU junction temperature in Celsius.
 - `vram`: VRAM temperature in Celsius.

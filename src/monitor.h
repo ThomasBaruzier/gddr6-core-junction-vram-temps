@@ -36,6 +36,8 @@ typedef struct {
 typedef struct {
     unsigned int index;
     const char *short_name;
+    const char *uuid;
+    const char *uuid_short;
     Temperature core;
     JunctionReading junction;
     VramReading vram;

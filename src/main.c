@@ -54,6 +54,7 @@ typedef struct {
     unsigned int gpu_count;
     unsigned int index_width;
     unsigned int name_width;
+    unsigned int uuid_width;
     bool show_marker;
     int refresh_ms;
     RunMode run_mode;
@@ -78,7 +79,6 @@ static void init_context(Context *ctx)
     ctx->run_mode = RUN_CONTINUOUS;
     ctx->refresh_ms = DEFAULT_REFRESH_MS;
     ctx->index_width = 1;
-    ctx->name_width = 3;
 }
 
 static void cleanup_context(Context *ctx)
@@ -203,6 +203,13 @@ static void append_name_cell(Context *ctx, const char *name)
     append_output(ctx, " ");
 }
 
+static void append_uuid_cell(Context *ctx, const char *uuid)
+{
+    append_output(ctx, " ");
+    append_padded(ctx, uuid ? uuid : "", ctx->uuid_width);
+    append_output(ctx, " ");
+}
+
 static void append_temperature_header(Context *ctx, const char *name)
 {
     append_output(ctx, "  %s  ", name);
@@ -241,17 +248,22 @@ static void update_column_widths(Context *ctx)
     unsigned int max_index = 0;
 
     ctx->name_width = 3;
+    ctx->uuid_width = 0;
 
     for (unsigned int i = 0; i < ctx->gpu_count; i++) {
         const GpuReading *gpu = monitor_gpu(ctx->monitor, i);
         unsigned int name_width;
+        unsigned int uuid_width;
 
         if (!gpu)
             continue;
 
         name_width = (unsigned int)strlen(gpu->short_name);
+        uuid_width = gpu->uuid_short ?
+            (unsigned int)strlen(gpu->uuid_short) : 0;
         max_index = max_uint(max_index, gpu->index);
         ctx->name_width = max_uint(ctx->name_width, name_width);
+        ctx->uuid_width = max_uint(ctx->uuid_width, uuid_width);
     }
 
     ctx->index_width = decimal_width(max_index);
@@ -280,6 +292,11 @@ static void append_table_header(Context *ctx)
         marker, TABLE_SEPARATOR);
     append_name_cell(ctx, "GPU");
 
+    if (ctx->uuid_width > 0) {
+        append_output(ctx, "%s", TABLE_SEPARATOR);
+        append_uuid_cell(ctx, "UUID");
+    }
+
     append_output(ctx, "%s", TABLE_SEPARATOR);
     append_temperature_header(ctx, "CORE");
 
@@ -297,6 +314,11 @@ static void append_table_row(Context *ctx, const GpuReading *gpu)
     append_output(ctx, "%*u %s", (int)ctx->index_width,
         gpu->index, TABLE_SEPARATOR);
     append_name_cell(ctx, gpu->short_name);
+
+    if (ctx->uuid_width > 0) {
+        append_output(ctx, "%s", TABLE_SEPARATOR);
+        append_uuid_cell(ctx, gpu->uuid_short);
+    }
 
     append_output(ctx, "%s", TABLE_SEPARATOR);
     append_temperature_cell(ctx, gpu->core,
@@ -363,7 +385,8 @@ static void print_json_sample(Context *ctx)
         if (emitted++ > 0)
             append_output(ctx, ",");
 
-        append_output(ctx, "{\"index\":%u,", gpu->index);
+        append_output(ctx, "{\"index\":%u,\"uuid\":\"%s\",",
+            gpu->index, gpu->uuid ? gpu->uuid : "");
         append_json_temperature(ctx, "core", gpu->core);
         append_output(ctx, ",");
         append_json_temperature(ctx, "junction",
